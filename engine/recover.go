@@ -24,6 +24,8 @@ type RecoverConfig struct {
 	InputJSON string
 	// OutputDir is where recovered files are placed.
 	OutputDir string
+	// SessionDir, if set, is where logs are written (instead of OutputDir).
+	SessionDir string
 	// CookieJar is the path to the Netscape cookie jar file.
 	CookieJar string
 	// Concurrency is the number of parallel downloads.
@@ -80,7 +82,11 @@ func RunRecover(cfg RecoverConfig, events chan<- RecoverEvent) (*RecoverResult, 
 	}
 
 	// Logging
-	logPath := filepath.Join(cfg.OutputDir, "recovery.log")
+	logDir := cfg.OutputDir
+	if cfg.SessionDir != "" {
+		logDir = cfg.SessionDir
+	}
+	logPath := filepath.Join(logDir, "recovery.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)

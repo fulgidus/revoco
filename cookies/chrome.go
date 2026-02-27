@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"time"
 
 	"crypto/sha1"
@@ -296,4 +297,40 @@ func joinStrings(parts []string, sep string) string {
 		result += p
 	}
 	return result
+}
+
+// DefaultChromeDBPath returns the default Chrome cookies database path for the
+// current platform. Returns an error if the path does not exist.
+func DefaultChromeDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home dir: %w", err)
+	}
+
+	candidates := defaultChromeCandidates(home)
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("Chrome cookies DB not found; tried: %v", candidates)
+}
+
+// ExtractToJar extracts Google-domain cookies from Chrome's SQLite DB,
+// decrypts them with the given v11 password, and writes a Netscape cookie
+// jar to jarPath. Returns the number of cookies extracted.
+func ExtractToJar(chromeDBPath, v11Password, jarPath string) (int, error) {
+	dec := NewChromeDecryptor(v11Password)
+	rows, err := ReadChromeCookies(chromeDBPath, GoogleDomains, dec)
+	if err != nil {
+		return 0, fmt.Errorf("read chrome cookies: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, fmt.Errorf("no Google cookies found in Chrome DB")
+	}
+	if err := WriteNetscapeJar(jarPath, rows); err != nil {
+		return 0, fmt.Errorf("write cookie jar: %w", err)
+	}
+	return len(rows), nil
 }

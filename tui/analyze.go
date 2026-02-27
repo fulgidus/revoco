@@ -56,10 +56,11 @@ type AnalyzeModel struct {
 	mode AnalyzeMode
 
 	// Inputs forwarded from the welcome screen
-	sourceDir string
-	destDir   string
-	cookieJar string
-	inputJSON string
+	sourceDir  string
+	destDir    string
+	cookieJar  string
+	inputJSON  string
+	sessionDir string // session folder for logs; empty if no session
 
 	spin     spinner.Model
 	scanning bool
@@ -78,20 +79,22 @@ type AnalyzeModel struct {
 }
 
 // NewAnalyzeModel creates a new AnalyzeModel for the given mode and inputs.
-func NewAnalyzeModel(mode AnalyzeMode, source, dest, cookieJar, inputJSON string, width, height int) AnalyzeModel {
+// sessionDir is the session folder for logs (empty string if no active session).
+func NewAnalyzeModel(mode AnalyzeMode, source, dest, cookieJar, inputJSON, sessionDir string, width, height int) AnalyzeModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	return AnalyzeModel{
-		mode:      mode,
-		sourceDir: source,
-		destDir:   dest,
-		cookieJar: cookieJar,
-		inputJSON: inputJSON,
-		spin:      sp,
-		scanning:  true,
-		width:     width,
-		height:    height,
+		mode:       mode,
+		sourceDir:  source,
+		destDir:    dest,
+		cookieJar:  cookieJar,
+		inputJSON:  inputJSON,
+		sessionDir: sessionDir,
+		spin:       sp,
+		scanning:   true,
+		width:      width,
+		height:     height,
 	}
 }
 
@@ -132,12 +135,6 @@ func (m AnalyzeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 
-	case tea.MouseMsg:
-		if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
-			return m, nil
-		}
-		return m.handleMouseClick(msg.X, msg.Y)
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "left", "h":
@@ -153,14 +150,6 @@ func (m AnalyzeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m AnalyzeModel) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
-	// Simple heuristic: buttons rendered on a known line — just delegate to
-	// activate with focus determined by horizontal position.
-	_ = x
-	_ = y
-	return m.activate()
-}
-
 func (m AnalyzeModel) activate() (tea.Model, tea.Cmd) {
 	if m.focus == 1 || m.err != nil && m.focus == 0 {
 		// Cancel — back to welcome
@@ -169,12 +158,12 @@ func (m AnalyzeModel) activate() (tea.Model, tea.Cmd) {
 	// Start — launch the actual operation
 	switch m.mode {
 	case AnalyzeModeProcess:
-		pm := NewProcessModel(m.sourceDir, m.destDir, m.width, m.height)
+		pm := NewProcessModel(m.sourceDir, m.destDir, m.sessionDir, m.width, m.height)
 		return m, func() tea.Msg {
 			return SwitchScreenMsg{To: ScreenProcess, Process: &pm}
 		}
 	case AnalyzeModeRecover:
-		rm := NewRecoverModel(m.cookieJar, m.inputJSON, m.width, m.height)
+		rm := NewRecoverModel(m.cookieJar, m.inputJSON, m.sessionDir, m.width, m.height)
 		return m, func() tea.Msg {
 			return SwitchScreenMsg{To: ScreenRecover, Recover: &rm}
 		}

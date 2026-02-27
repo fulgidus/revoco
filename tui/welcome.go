@@ -1,12 +1,17 @@
 package tui
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/fulgidus/revoco/cookies"
+	"github.com/fulgidus/revoco/secrets"
+	"github.com/fulgidus/revoco/session"
 	"github.com/fulgidus/revoco/tui/components"
 )
 
@@ -52,6 +57,10 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color("205")).
 				Background(lipgloss.Color("57"))
+
+	sessionNameStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("39"))
 )
 
 // ── Menu items ────────────────────────────────────────────────────────────────
@@ -64,26 +73,12 @@ type menuItem struct {
 var menuItems = []menuItem{
 	{"Process Takeout", "Import and organise a Google Photos Takeout archive"},
 	{"Recover Missing", "Download missing files using Chrome cookies"},
+	{"Session Settings", "Configure output directories and options"},
+	{"Back to Sessions", "Return to session list"},
 	{"Quit", "Exit revoco"},
 }
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-
-// menuItemStartRow returns the terminal row (0-indexed) where menu item i
-// begins, assuming the left panel starts at row 0 of the terminal.
-//
-// Left panel interior layout (rows inside the border):
-//
-//	row 0: title
-//	row 1: blank (MarginBottom(1) on titleStyle)
-//	row 2: subtitle ("v0.1.0")
-//	row 3: blank line
-//	row 4+: menu items, 2 rows each (label + desc)
-//
-// The rounded border adds 1 row at the top, so terminal row = interior + 1.
-func menuItemStartRow(i int) int {
-	return 1 + 4 + i*2 // top_border(1) + header_rows(4) + item_offset
-}
 
 // ── WelcomeModel ──────────────────────────────────────────────────────────────
 
@@ -97,10 +92,12 @@ const (
 	fieldInputJSON
 )
 
-// WelcomeModel is the landing screen with a two-panel layout.
+// WelcomeModel is the per-session menu screen with a two-panel layout.
 // Left panel: clickable menu. Right panel: configuration for the selected item.
 // A filepicker overlay slides in when the user clicks [Browse] or presses ctrl+o.
 type WelcomeModel struct {
+	session *session.Session
+
 	cursor int
 	width  int
 	height int
@@ -116,10 +113,18 @@ type WelcomeModel struct {
 	pickerOpen  bool
 	pickerField configField // which field the picker will fill
 	picker      components.FilePicker
+
+	// Chrome cookie extraction
+	chromePromptOpen bool            // password dialog is visible
+	chromePromptStep int             // 0 = vault password, 1 = Chrome v11 password
+	chromeVaultPass  string          // vault master password (held in RAM only)
+	chromePassInput  textinput.Model // current password text input (masked)
+	chromeStatus     string          // status message after extraction attempt
+	chromeErr        string          // error message from last extraction
 }
 
-// NewWelcomeModel returns a fresh welcome screen.
-func NewWelcomeModel() WelcomeModel {
+// NewWelcomeModel returns a fresh welcome screen for the given session.
+func NewWelcomeModel(sess *session.Session) WelcomeModel {
 	inputs := [4]textinput.Model{}
 	placeholders := []string{
 		"Takeout root directory",
@@ -134,9 +139,35 @@ func NewWelcomeModel() WelcomeModel {
 		inputs[i] = ti
 	}
 	inputs[0].Focus()
-	return WelcomeModel{
-		inputs: inputs,
+
+	m := WelcomeModel{
+		session: sess,
+		inputs:  inputs,
 	}
+
+	// Chrome password input (masked)
+	chromePass := textinput.New()
+	chromePass.Placeholder = "Chrome v11 password (empty on most Linux)"
+	chromePass.EchoMode = textinput.EchoPassword
+	chromePass.EchoCharacter = '*'
+	chromePass.CharLimit = 256
+	m.chromePassInput = chromePass
+
+	// Pre-fill from session config if available
+	if sess != nil {
+		if sess.SourcePath() != "" {
+			m.inputs[fieldSourceDir].SetValue(sess.SourcePath())
+		}
+		if sess.OutputPath() != "" {
+			m.inputs[fieldDestDir].SetValue(sess.OutputPath())
+		}
+		// Recovery fields
+		if sess.Config.Recover.InputJSON != "" {
+			m.inputs[fieldInputJSON].SetValue(sess.LogPath(sess.Config.Recover.InputJSON))
+		}
+	}
+
+	return m
 }
 
 // Init implements tea.Model.
@@ -145,6 +176,11 @@ func (m WelcomeModel) Init() tea.Cmd { return textinput.Blink }
 // ── Update ────────────────────────────────────────────────────────────────────
 
 func (m WelcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// If chrome password prompt is open, forward all messages to it first.
+	if m.chromePromptOpen {
+		return m.updateChromePrompt(msg)
+	}
+
 	// If filepicker overlay is open, forward all messages to it first.
 	if m.pickerOpen {
 		return m.updatePicker(msg)
@@ -156,10 +192,17 @@ func (m WelcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionRelease && msg.Button == tea.MouseButtonLeft {
-			return m.handleClick(msg.X, msg.Y)
+	case chromeExtractResultMsg:
+		m.chromePromptOpen = false
+		if msg.err != nil {
+			m.chromeErr = msg.err.Error()
+			m.chromeStatus = ""
+		} else {
+			m.chromeErr = ""
+			m.inputs[fieldCookieJar].SetValue(msg.jarPath)
+			m.chromeStatus = fmt.Sprintf("%d cookies extracted to %s", msg.count, msg.jarPath)
 		}
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -187,7 +230,8 @@ func (m WelcomeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showRight = false
 			return m, nil
 		}
-		return m, tea.Quit
+		// Back to sessions list
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
 
 	case "up", "k":
 		if !m.showRight {
@@ -196,7 +240,8 @@ func (m WelcomeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.blurAll()
-			if int(m.focused) > 0 {
+			minF := m.minField()
+			if int(m.focused) > minF {
 				m.focused--
 			}
 			m.inputs[m.focused].Focus()
@@ -221,10 +266,11 @@ func (m WelcomeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		if m.showRight {
 			m.blurAll()
+			minF := m.minField()
 			maxF := m.maxField()
 			next := int(m.focused) + 1
 			if next > maxF {
-				next = 0
+				next = minF
 			}
 			m.focused = configField(next)
 			m.inputs[m.focused].Focus()
@@ -234,6 +280,13 @@ func (m WelcomeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+o": // open filepicker for focused field
 		if m.showRight {
 			cmd := m.openPicker(m.focused)
+			return m, cmd
+		}
+		return m, nil
+
+	case "ctrl+e": // extract Chrome cookies (recover mode only)
+		if m.showRight && m.cursor == 1 {
+			cmd := m.openChromePrompt()
 			return m, cmd
 		}
 		return m, nil
@@ -256,69 +309,6 @@ func (m WelcomeModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.updateActiveInput(msg)
 }
 
-// handleClick handles left-button mouse clicks anywhere on screen.
-//
-// Hit regions:
-//  1. Menu items — detected mathematically via menuItemStartRow(i).
-//     Each item occupies 2 rows (label + desc). Left panel starts at x=0.
-//     Left border is at x=0, interior starts at x=1.
-//  2. [Browse] button — detected when right panel is shown and click is in
-//     the right half of the terminal at the known button Y positions.
-func (m WelcomeModel) handleClick(x, y int) (tea.Model, tea.Cmd) {
-	leftOuterW := m.leftWidth()
-
-	// ── Menu item clicks ──────────────────────────────────────────────────────
-	// The left panel spans x: 0 .. leftOuterW-1
-	if x < leftOuterW {
-		for i := range menuItems {
-			startRow := menuItemStartRow(i)
-			if y == startRow || y == startRow+1 {
-				m.cursor = i
-				return m.activateMenuItem()
-			}
-		}
-	}
-
-	// ── [Browse] button clicks ────────────────────────────────────────────────
-	// Only relevant when the right config panel is visible.
-	if m.showRight && x >= leftOuterW {
-		// Right panel interior starts at x = leftOuterW + 1 (gap) + 1 (border) = leftOuterW+2
-		// Config panel layout inside right panel:
-		//   row 0 (interior): title
-		//   row 1: blank
-		//   row 2: field 0 label
-		//   row 3: field 0 input + [Browse]   ← clickable
-		//   row 4: blank
-		//   row 5: field 1 label
-		//   row 6: field 1 input + [Browse]   ← clickable
-		//
-		// Terminal row = 1 (top border) + interior_row
-		// So field-0 [Browse] is at terminal row 4, field-1 at row 7.
-
-		firstField := configField(0)
-		if m.cursor == 1 {
-			firstField = fieldCookieJar
-		}
-
-		browseRows := [2]int{
-			1 + 1 + 2,     // top_border + title_rows(2) + label(1) = row 4 inside terminal (top_border=1, title+blank=2, label=1 → input row=4)
-			1 + 1 + 2 + 3, // same + gap(1) + label(1) + input: row 7
-		}
-
-		for i, brow := range browseRows {
-			if y == brow {
-				targetField := configField(int(firstField) + i)
-				if int(targetField) <= m.maxField() {
-					cmd := m.openPicker(targetField)
-					return m, cmd
-				}
-			}
-		}
-	}
-
-	return m, nil
-}
-
 func (m WelcomeModel) activateMenuItem() (tea.Model, tea.Cmd) {
 	switch m.cursor {
 	case 0: // Process Takeout
@@ -331,7 +321,12 @@ func (m WelcomeModel) activateMenuItem() (tea.Model, tea.Cmd) {
 		m.focused = fieldCookieJar
 		m.blurAll()
 		m.inputs[fieldCookieJar].Focus()
-	case 2: // Quit
+	case 2: // Session Settings
+		// TODO: dedicated settings screen. For now, no-op.
+		return m, nil
+	case 3: // Back to Sessions
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
+	case 4: // Quit
 		return m, tea.Quit
 	}
 	return m, nil
@@ -343,6 +338,25 @@ func (m WelcomeModel) launchAnalyze() (tea.Model, tea.Cmd) {
 	cookieJar := m.inputs[fieldCookieJar].Value()
 	inputJSON := m.inputs[fieldInputJSON].Value()
 
+	// Persist choices back to session config
+	if m.session != nil {
+		if m.cursor == 0 {
+			// Process mode: update source + output
+			if source != "" {
+				m.session.Config.Source.OriginalPath = source
+				m.session.Config.Source.Type = session.SourceFolder
+			}
+			if dest != "" {
+				m.session.Config.OutputDir = dest
+			}
+			m.session.Config.Status = session.StatusProcessing
+		} else {
+			// Recover mode
+			m.session.Config.Status = session.StatusRecovering
+		}
+		_ = m.session.Save()
+	}
+
 	var mode AnalyzeMode
 	if m.cursor == 0 {
 		mode = AnalyzeModeProcess
@@ -350,7 +364,12 @@ func (m WelcomeModel) launchAnalyze() (tea.Model, tea.Cmd) {
 		mode = AnalyzeModeRecover
 	}
 
-	am := NewAnalyzeModel(mode, source, dest, cookieJar, inputJSON, m.width, m.height)
+	var sessionDir string
+	if m.session != nil {
+		sessionDir = m.session.Dir
+	}
+
+	am := NewAnalyzeModel(mode, source, dest, cookieJar, inputJSON, sessionDir, m.width, m.height)
 	return m, func() tea.Msg {
 		return SwitchScreenMsg{To: ScreenAnalyze, Analyze: &am}
 	}
@@ -398,11 +417,108 @@ func (m *WelcomeModel) openPicker(field configField) tea.Cmd {
 	return m.picker.Init()
 }
 
+// ── Chrome cookie extraction ────────────────────────────────────────────────
+
+// openChromePrompt opens the password dialog for Chrome cookie extraction.
+// Step 0: vault master password, Step 1: Chrome v11 decryption password.
+func (m *WelcomeModel) openChromePrompt() tea.Cmd {
+	m.chromePromptOpen = true
+	m.chromePromptStep = 0
+	m.chromeVaultPass = ""
+	m.chromeStatus = ""
+	m.chromeErr = ""
+	m.chromePassInput.SetValue("")
+	m.chromePassInput.Placeholder = "Vault master password"
+	m.chromePassInput.Focus()
+	return textinput.Blink
+}
+
+// updateChromePrompt handles events while the Chrome password dialog is open.
+func (m WelcomeModel) updateChromePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.chromePromptOpen = false
+			m.chromeVaultPass = ""
+			return m, nil
+		case "enter":
+			if m.chromePromptStep == 0 {
+				// Step 0 complete: capture vault password, advance to step 1
+				m.chromeVaultPass = m.chromePassInput.Value()
+				m.chromePromptStep = 1
+				m.chromePassInput.SetValue("")
+				m.chromePassInput.Placeholder = "Chrome v11 password (empty on most Linux)"
+				m.chromePassInput.Focus()
+				return m, textinput.Blink
+			}
+			// Step 1 complete: extract cookies
+			return m.extractChromeCookies()
+		}
+	}
+	var cmd tea.Cmd
+	m.chromePassInput, cmd = m.chromePassInput.Update(msg)
+	return m, cmd
+}
+
+// chromeExtractResultMsg carries the result of background Chrome extraction.
+type chromeExtractResultMsg struct {
+	jarPath string
+	count   int
+	err     error
+}
+
+// extractChromeCookies runs the Chrome cookie extraction.
+func (m WelcomeModel) extractChromeCookies() (tea.Model, tea.Cmd) {
+	chromePassword := m.chromePassInput.Value()
+	vaultPassword := m.chromeVaultPass
+	m.chromeStatus = "Extracting cookies..."
+	m.chromeErr = ""
+
+	// We need a session dir to write the jar into
+	var jarPath string
+	if m.session != nil {
+		jarPath = filepath.Join(m.session.Dir, "cookies.txt")
+	} else {
+		jarPath = "cookies.txt"
+	}
+
+	// Store Chrome v11 password in vault (encrypted with vault master password)
+	vaultPath, vaultErr := secrets.DefaultPath()
+	if vaultErr == nil && vaultPassword != "" {
+		_ = secrets.Store(vaultPath, vaultPassword, "chrome_v11_password", chromePassword)
+	}
+
+	// Clear vault password from memory
+	m.chromeVaultPass = ""
+
+	// Run extraction in a goroutine to avoid blocking TUI
+	return m, func() tea.Msg {
+		dbPath, err := cookies.DefaultChromeDBPath()
+		if err != nil {
+			return chromeExtractResultMsg{err: err}
+		}
+		count, err := cookies.ExtractToJar(dbPath, chromePassword, jarPath)
+		if err != nil {
+			return chromeExtractResultMsg{err: err}
+		}
+		return chromeExtractResultMsg{jarPath: jarPath, count: count}
+	}
+}
+
 // blurAll removes focus from all inputs.
 func (m *WelcomeModel) blurAll() {
 	for i := range m.inputs {
 		m.inputs[i].Blur()
 	}
+}
+
+// minField returns the index of the first visible config field for the active menu item.
+func (m WelcomeModel) minField() int {
+	if m.cursor == 0 {
+		return int(fieldSourceDir)
+	}
+	return int(fieldCookieJar) // Recover mode: skip sourceDir and destDir
 }
 
 // maxField returns the index of the last visible config field for the active menu item.
@@ -430,6 +546,9 @@ func (m WelcomeModel) useTwoPanel() bool {
 // ── View ─────────────────────────────────────────────────────────────────────
 
 func (m WelcomeModel) View() string {
+	if m.chromePromptOpen {
+		return m.viewChromePrompt()
+	}
 	if m.pickerOpen {
 		return m.viewPicker()
 	}
@@ -444,14 +563,51 @@ func (m WelcomeModel) viewPicker() string {
 	sb.WriteString(titleStyle.Render("Select path"))
 	sb.WriteString("\n\n")
 	sb.WriteString(m.picker.View())
-	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("↑/↓/enter navigate • esc cancel"))
 	return sb.String()
+}
+
+func (m WelcomeModel) viewChromePrompt() string {
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render("Extract Chrome Cookies"))
+	sb.WriteString("\n\n")
+
+	if m.chromePromptStep == 0 {
+		sb.WriteString(descStyle.Render("Step 1/2: Enter your vault master password."))
+		sb.WriteString("\n")
+		sb.WriteString(descStyle.Render("This encrypts secrets stored on disk."))
+		sb.WriteString("\n\n")
+		sb.WriteString(labelStyle.Render("Vault password:"))
+	} else {
+		sb.WriteString(descStyle.Render("Step 2/2: Enter your Chrome v11 decryption password."))
+		sb.WriteString("\n")
+		sb.WriteString(descStyle.Render("On most Linux systems this is empty — just press Enter."))
+		sb.WriteString("\n\n")
+		sb.WriteString(labelStyle.Render("Chrome password:"))
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(m.chromePassInput.View())
+	sb.WriteString("\n\n")
+	if m.chromeStatus != "" {
+		sb.WriteString(statValueStyle.Render(m.chromeStatus))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(helpStyle.Render("enter continue • esc cancel"))
+	return sb.String()
+}
+
+func (m WelcomeModel) sessionLabel() string {
+	if m.session != nil {
+		return m.session.Config.Name
+	}
+	return "(no session)"
 }
 
 func (m WelcomeModel) viewSinglePanel() string {
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render("revoco"))
+	sb.WriteString("\n")
+	sb.WriteString(sessionNameStyle.Render("Session: " + m.sessionLabel()))
 	sb.WriteString("\n")
 	sb.WriteString(subtitleStyle.Render("Google Photos Takeout processor & recovery tool"))
 	sb.WriteString("\n\n")
@@ -468,7 +624,7 @@ func (m WelcomeModel) viewSinglePanel() string {
 		sb.WriteString(descStyle.Render("  " + item.desc))
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString(helpStyle.Render("↑/↓ navigate • enter select • q quit"))
+	sb.WriteString(helpStyle.Render("↑/↓ navigate • enter select • esc sessions • q quit"))
 	return sb.String()
 }
 
@@ -511,6 +667,8 @@ func (m WelcomeModel) viewMenuPanel(innerW int) string {
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render("revoco"))
 	sb.WriteString("\n")
+	sb.WriteString(sessionNameStyle.Render("Session: " + m.sessionLabel()))
+	sb.WriteString("\n")
 	sb.WriteString(subtitleStyle.Render("v0.1.0"))
 	sb.WriteString("\n\n")
 
@@ -530,7 +688,7 @@ func (m WelcomeModel) viewMenuPanel(innerW int) string {
 		sb.WriteString(descStyle.Render("  " + item.desc))
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString(helpStyle.Render("↑/↓ • enter • q"))
+	sb.WriteString(helpStyle.Render("↑/↓ • enter • esc • q"))
 	return sb.String()
 }
 
@@ -544,6 +702,17 @@ func (m WelcomeModel) viewConfigPanel(w int) string {
 		sb.WriteString(descStyle.Render("Use ↑/↓ to navigate the menu,"))
 		sb.WriteString("\n")
 		sb.WriteString(descStyle.Render("then press enter or click to configure."))
+
+		// Show session source info if available
+		if m.session != nil && m.session.Config.Source.OriginalPath != "" {
+			sb.WriteString("\n\n")
+			sb.WriteString(labelStyle.Render("Source:"))
+			sb.WriteString("\n")
+			sb.WriteString(descStyle.Render("  " + m.session.Config.Source.OriginalPath))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Status: "))
+			sb.WriteString(descStyle.Render(string(m.session.Config.Status)))
+		}
 		return sb.String()
 	}
 
@@ -561,12 +730,63 @@ func (m WelcomeModel) viewConfigPanel(w int) string {
 		sb.WriteString(subtitleStyle.Render("Recover Missing Files"))
 		sb.WriteString("\n\n")
 		sb.WriteString(m.renderField(fieldCookieJar, "Cookie jar path", w))
+		sb.WriteString("  ")
+		sb.WriteString(browseButtonStyle.Render("[Extract from Chrome]"))
 		sb.WriteString("\n")
+		if m.chromeStatus != "" {
+			sb.WriteString(statValueStyle.Render("  " + m.chromeStatus))
+			sb.WriteString("\n")
+		}
+		if m.chromeErr != "" {
+			sb.WriteString(errorMsgStyle.Render("  " + m.chromeErr))
+			sb.WriteString("\n")
+		}
 		sb.WriteString(m.renderField(fieldInputJSON, "missing-files.json path", w))
 		sb.WriteString("\n\n")
-		sb.WriteString(helpStyle.Render("tab/↑↓ navigate • ctrl+o browse • enter proceed"))
+		sb.WriteString(helpStyle.Render("tab/↑↓ navigate • ctrl+o browse • ctrl+e chrome • enter proceed"))
 
-	case 2: // Quit
+	case 2: // Session Settings
+		sb.WriteString(subtitleStyle.Render("Session Settings"))
+		sb.WriteString("\n\n")
+		if m.session != nil {
+			sb.WriteString(labelStyle.Render("Name: "))
+			sb.WriteString(descStyle.Render(m.session.Config.Name))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Created: "))
+			sb.WriteString(descStyle.Render(m.session.Config.Created.Format("2006-01-02 15:04")))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Status: "))
+			sb.WriteString(descStyle.Render(string(m.session.Config.Status)))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Source: "))
+			sb.WriteString(descStyle.Render(m.session.Config.Source.OriginalPath))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Output: "))
+			sb.WriteString(descStyle.Render(m.session.OutputPath()))
+			sb.WriteString("\n")
+			sb.WriteString(labelStyle.Render("Session dir: "))
+			sb.WriteString(descStyle.Render(m.session.Dir))
+			sb.WriteString("\n\n")
+
+			// Secrets vault status
+			vaultPath, vaultErr := secrets.DefaultPath()
+			if vaultErr == nil && secrets.Exists(vaultPath) {
+				sb.WriteString(labelStyle.Render("Secrets vault: "))
+				sb.WriteString(statValueStyle.Render("configured"))
+			} else {
+				sb.WriteString(labelStyle.Render("Secrets vault: "))
+				sb.WriteString(descStyle.Render("not set up"))
+			}
+		}
+		sb.WriteString("\n\n")
+		sb.WriteString(helpStyle.Render("(settings editing coming soon)"))
+
+	case 3: // Back to Sessions
+		sb.WriteString(subtitleStyle.Render("Back"))
+		sb.WriteString("\n\n")
+		sb.WriteString(helpStyle.Render("Press enter to return to the session list."))
+
+	case 4: // Quit
 		sb.WriteString(subtitleStyle.Render("Quit"))
 		sb.WriteString("\n\n")
 		sb.WriteString(helpStyle.Render("Press enter to exit revoco."))

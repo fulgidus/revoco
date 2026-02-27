@@ -68,10 +68,12 @@ type ProcessModel struct {
 }
 
 // NewProcessModel builds a ProcessModel ready to run.
-func NewProcessModel(source, dest string, width, height int) ProcessModel {
+// sessionDir, if non-empty, directs logs to the session folder.
+func NewProcessModel(source, dest, sessionDir string, width, height int) ProcessModel {
 	cfg := engine.PipelineConfig{
-		SourceDir: source,
-		DestDir:   dest,
+		SourceDir:  source,
+		DestDir:    dest,
+		SessionDir: sessionDir,
 	}
 	ch := make(chan engine.ProgressEvent, 64)
 
@@ -228,10 +230,6 @@ func (m ProcessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.MouseMsg:
-		logCmd := m.log.Update(msg)
-		return m, logCmd
-
 	case tea.KeyMsg:
 		if m.done {
 			switch msg.String() {
@@ -242,7 +240,7 @@ func (m ProcessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return SwitchScreenMsg{To: ScreenReport, Report: &rm}
 					}
 				}
-				return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+				return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
 			}
 		}
 	}

@@ -19,10 +19,11 @@ type ProgressEvent struct {
 
 // PipelineConfig holds all options for a full processing run.
 type PipelineConfig struct {
-	SourceDir string
-	DestDir   string
-	UseMove   bool
-	DryRun    bool
+	SourceDir  string
+	DestDir    string
+	SessionDir string // if set, logs go here instead of DestDir
+	UseMove    bool
+	DryRun     bool
 }
 
 // PipelineResult is the final output of a complete run.
@@ -51,7 +52,14 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	if err := os.MkdirAll(cfg.DestDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create dest dir: %w", err)
 	}
-	logPath := filepath.Join(cfg.DestDir, "process.log")
+	logDir := cfg.DestDir
+	if cfg.SessionDir != "" {
+		logDir = cfg.SessionDir
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create session dir: %w", err)
+		}
+	}
+	logPath := filepath.Join(logDir, "process.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
@@ -157,7 +165,11 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 
 	// ── Phase 8: Report ─────────────────────────────────────────────────────
 	emit(7, "Generating report", 0, 1, "")
-	report, err := GenerateReport(idx.OrphanJSONs, cfg.DestDir)
+	reportDir := cfg.DestDir
+	if cfg.SessionDir != "" {
+		reportDir = cfg.SessionDir
+	}
+	report, err := GenerateReport(idx.OrphanJSONs, reportDir)
 	if err != nil {
 		logger.Printf("[Phase 8] report error: %v", err)
 	}

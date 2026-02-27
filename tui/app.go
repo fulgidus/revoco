@@ -3,13 +3,16 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbletea"
+
+	"github.com/fulgidus/revoco/session"
 )
 
 // Screen identifies which TUI screen is active.
 type Screen int
 
 const (
-	ScreenWelcome Screen = iota
+	ScreenSessions Screen = iota // session management (landing)
+	ScreenWelcome                // per-session menu + config
 	ScreenAnalyze
 	ScreenProcess
 	ScreenRecover
@@ -18,27 +21,31 @@ const (
 
 // App is the top-level Bubble Tea model that hosts all screens.
 type App struct {
-	screen  Screen
-	welcome WelcomeModel
-	analyze AnalyzeModel
-	process ProcessModel
-	recover RecoverModel
-	report  ReportModel
-	width   int
-	height  int
+	screen   Screen
+	sessions SessionsModel
+	welcome  WelcomeModel
+	analyze  AnalyzeModel
+	process  ProcessModel
+	recover  RecoverModel
+	report   ReportModel
+	width    int
+	height   int
+
+	// activeSession is set when a session is opened from the session list.
+	activeSession *session.Session
 }
 
-// NewApp creates the TUI application starting on the Welcome screen.
+// NewApp creates the TUI application starting on the Sessions screen.
 func NewApp() App {
 	return App{
-		screen:  ScreenWelcome,
-		welcome: NewWelcomeModel(),
+		screen:   ScreenSessions,
+		sessions: NewSessionsModel(),
 	}
 }
 
 // Init implements tea.Model.
 func (a App) Init() tea.Cmd {
-	return a.welcome.Init()
+	return a.sessions.Init()
 }
 
 // Update implements tea.Model.
@@ -65,6 +72,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // propagateSize sends a WindowSizeMsg to the active screen.
 func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	switch a.screen {
+	case ScreenSessions:
+		m, cmd := a.sessions.Update(msg)
+		a.sessions = m.(SessionsModel)
+		return a, cmd
 	case ScreenWelcome:
 		m, cmd := a.welcome.Update(msg)
 		a.welcome = m.(WelcomeModel)
@@ -92,6 +103,10 @@ func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // delegateMsg forwards any message to the currently active screen model.
 func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch a.screen {
+	case ScreenSessions:
+		m, cmd := a.sessions.Update(msg)
+		a.sessions = m.(SessionsModel)
+		return a, cmd
 	case ScreenWelcome:
 		m, cmd := a.welcome.Update(msg)
 		a.welcome = m.(WelcomeModel)
@@ -119,6 +134,8 @@ func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (a App) View() string {
 	switch a.screen {
+	case ScreenSessions:
+		return a.sessions.View()
 	case ScreenAnalyze:
 		return a.analyze.View()
 	case ScreenProcess:
@@ -135,6 +152,7 @@ func (a App) View() string {
 // SwitchScreenMsg is sent to navigate between screens.
 type SwitchScreenMsg struct {
 	To      Screen
+	Session *session.Session // set when opening a session
 	Analyze *AnalyzeModel
 	Process *ProcessModel
 	Recover *RecoverModel
@@ -143,7 +161,20 @@ type SwitchScreenMsg struct {
 
 func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 	a.screen = msg.To
+
+	// Capture session context when transitioning from sessions → welcome
+	if msg.Session != nil {
+		a.activeSession = msg.Session
+	}
+
 	switch msg.To {
+	case ScreenSessions:
+		a.sessions = NewSessionsModel()
+		a.activeSession = nil
+		return a, a.sessions.Init()
+	case ScreenWelcome:
+		a.welcome = NewWelcomeModel(a.activeSession)
+		return a, a.welcome.Init()
 	case ScreenAnalyze:
 		if msg.Analyze != nil {
 			a.analyze = *msg.Analyze
@@ -165,7 +196,7 @@ func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.report.Init()
 	default:
-		a.welcome = NewWelcomeModel()
-		return a, a.welcome.Init()
+		a.sessions = NewSessionsModel()
+		return a, a.sessions.Init()
 	}
 }

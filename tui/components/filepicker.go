@@ -1,95 +1,338 @@
+// Package components provides reusable TUI widgets for revoco.
 package components
 
 import (
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // PickerMode controls what the filepicker allows the user to select.
 type PickerMode int
 
 const (
-	// ModeDir only allows directory selection (for source/dest folder inputs).
+	// ModeDir allows directory selection. Enter navigates into directories,
+	// Space confirms the current directory as the selection.
 	ModeDir PickerMode = iota
-	// ModeFile allows file selection (for JSON/cookie file inputs).
+	// ModeFile allows file selection. Enter navigates into directories or
+	// selects the highlighted file.
 	ModeFile
 )
 
-// FilePicker wraps bubbles/filepicker with a simpler API for the revoco TUI.
-// After the user confirms a selection, Selected is set to the chosen path and
-// Done is true.
+// fsEntry is one item in the file listing.
+type fsEntry struct {
+	name  string
+	isDir bool
+}
+
+// readDirDoneMsg is sent when background directory reading completes.
+type readDirDoneMsg struct {
+	dir     string
+	entries []fsEntry
+	err     error
+}
+
+// FilePicker is a keyboard-driven file/directory picker.
+//
+// In ModeDir the user navigates with Enter and confirms the current directory
+// with Space.  In ModeFile the user navigates into directories with Enter and
+// selects a file with Enter.
 type FilePicker struct {
 	Mode     PickerMode
 	Selected string
 	Done     bool
 	Err      error
 
-	fp filepicker.Model
+	dir     string    // current directory being browsed
+	entries []fsEntry // current listing (dirs first, then files)
+	cursor  int       // highlighted entry
+	offset  int       // scroll viewport top
+	height  int       // visible rows
+
+	// AllowedExts filters selectable files in ModeFile (e.g. []string{".zip"}).
+	// Empty means all files are allowed.
+	AllowedExts []string
 }
 
-// NewFilePicker creates a FilePicker starting in the user's home directory
-// (or the current directory if home cannot be determined).
+// NewFilePicker creates a FilePicker starting in the user's home directory.
 func NewFilePicker(mode PickerMode) FilePicker {
-	startDir, err := os.UserHomeDir()
-	if err != nil {
+	startDir, _ := os.UserHomeDir()
+	if startDir == "" {
 		startDir = "."
 	}
-
-	fp := filepicker.New()
-	fp.CurrentDirectory = startDir
-	fp.ShowHidden = false
-	fp.AutoHeight = true
-
-	switch mode {
-	case ModeDir:
-		fp.DirAllowed = true
-		fp.FileAllowed = false
-	case ModeFile:
-		fp.DirAllowed = false
-		fp.FileAllowed = true
-	}
-
 	return FilePicker{
-		Mode: mode,
-		fp:   fp,
+		Mode:   mode,
+		dir:    startDir,
+		height: 20, // reasonable default; updated on WindowSizeMsg
 	}
 }
 
-// Init returns the filepicker's initial command (reads the start directory).
+// Init returns the command that reads the initial directory.
 func (p FilePicker) Init() tea.Cmd {
-	return p.fp.Init()
+	return p.readDirCmd(p.dir)
 }
 
-// Update forwards messages to the inner filepicker and detects selection.
-// Returns (updated FilePicker, cmd).
-func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
-	var cmd tea.Cmd
-	p.fp, cmd = p.fp.Update(msg)
+func (p FilePicker) readDirCmd(dir string) tea.Cmd {
+	return func() tea.Msg {
+		dir = filepath.Clean(dir)
+		raw, err := os.ReadDir(dir)
+		if err != nil {
+			return readDirDoneMsg{dir: dir, err: err}
+		}
 
-	if didSelect, path := p.fp.DidSelectFile(msg); didSelect {
-		p.Selected = path
-		p.Done = true
+		var entries []fsEntry
+		for _, e := range raw {
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue // skip hidden
+			}
+			entries = append(entries, fsEntry{name: name, isDir: e.IsDir()})
+		}
+
+		// Sort: directories first, then alphabetical
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].isDir != entries[j].isDir {
+				return entries[i].isDir
+			}
+			return entries[i].name < entries[j].name
+		})
+
+		// Prepend ".." unless we're already at the filesystem root
+		if filepath.Dir(dir) != dir {
+			entries = append([]fsEntry{{name: "..", isDir: true}}, entries...)
+		}
+
+		return readDirDoneMsg{dir: dir, entries: entries, err: nil}
 	}
-	if didSelect, path := p.fp.DidSelectDisabledFile(msg); didSelect {
-		// For dir-only mode, a "disabled file" selection means the user opened
-		// a directory — treat it as the selected path.
-		if p.Mode == ModeDir && path != "" {
+}
+
+// Update processes messages.
+func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		p.height = msg.Height - 6 // room for path header + help footer
+		if p.height < 5 {
+			p.height = 5
+		}
+
+	case readDirDoneMsg:
+		if msg.err != nil {
+			p.Err = msg.err
+			return p, nil
+		}
+		p.dir = msg.dir
+		p.entries = msg.entries
+		p.cursor = 0
+		p.offset = 0
+		p.Err = nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if p.cursor > 0 {
+				p.cursor--
+				if p.cursor < p.offset {
+					p.offset = p.cursor
+				}
+			}
+		case "down", "j":
+			if p.cursor < len(p.entries)-1 {
+				p.cursor++
+				if p.cursor >= p.offset+p.height {
+					p.offset = p.cursor - p.height + 1
+				}
+			}
+		case "pgup":
+			p.cursor -= p.height
+			if p.cursor < 0 {
+				p.cursor = 0
+			}
+			p.offset -= p.height
+			if p.offset < 0 {
+				p.offset = 0
+			}
+		case "pgdown":
+			p.cursor += p.height
+			if p.cursor >= len(p.entries) {
+				p.cursor = len(p.entries) - 1
+			}
+			if p.cursor < 0 {
+				p.cursor = 0
+			}
+			p.offset += p.height
+			if p.offset+p.height > len(p.entries) {
+				p.offset = len(p.entries) - p.height
+				if p.offset < 0 {
+					p.offset = 0
+				}
+			}
+		case "enter", "l", "right":
+			return p.handleOpen()
+		case "backspace", "h", "left":
+			return p.goParent()
+		case " ": // Space selects the current directory in ModeDir
+			if p.Mode == ModeDir {
+				p.Selected = p.dir
+				p.Done = true
+			}
+		case "~": // Jump to home
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				return p, p.readDirCmd(home)
+			}
+		case "/": // Jump to root
+			return p, p.readDirCmd("/")
+		case "g": // Jump to top of listing
+			p.cursor = 0
+			p.offset = 0
+		case "G": // Jump to bottom of listing
+			if len(p.entries) > 0 {
+				p.cursor = len(p.entries) - 1
+				if p.cursor >= p.offset+p.height {
+					p.offset = p.cursor - p.height + 1
+				}
+			}
+		}
+	}
+	return p, nil
+}
+
+func (p FilePicker) handleOpen() (FilePicker, tea.Cmd) {
+	if len(p.entries) == 0 {
+		return p, nil
+	}
+	e := p.entries[p.cursor]
+
+	// ".." goes to parent
+	if e.name == ".." {
+		return p.goParent()
+	}
+
+	if e.isDir {
+		newDir := filepath.Join(p.dir, e.name)
+		return p, p.readDirCmd(newDir)
+	}
+
+	// File selection in ModeFile
+	if p.Mode == ModeFile {
+		path := filepath.Join(p.dir, e.name)
+		if p.matchesFilter(path) {
 			p.Selected = path
 			p.Done = true
 		}
 	}
-
-	return p, cmd
+	return p, nil
 }
 
-// View renders the filepicker.
-func (p FilePicker) View() string {
-	return p.fp.View()
+func (p FilePicker) goParent() (FilePicker, tea.Cmd) {
+	parent := filepath.Dir(p.dir)
+	if parent == p.dir {
+		return p, nil // already at root
+	}
+	return p, p.readDirCmd(parent)
 }
 
-// SetHeight updates the filepicker height.
+func (p FilePicker) matchesFilter(path string) bool {
+	if len(p.AllowedExts) == 0 {
+		return true
+	}
+	lower := strings.ToLower(path)
+	for _, ext := range p.AllowedExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetHeight sets the visible row count.
 func (p *FilePicker) SetHeight(h int) {
-	p.fp.SetHeight(h)
+	p.height = h
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────────
+
+var (
+	fpPathStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	fpDirStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	fpFileStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	fpDisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	fpCursorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	fpHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	fpErrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+)
+
+// View renders the picker.
+func (p FilePicker) View() string {
+	var sb strings.Builder
+
+	// Current path
+	sb.WriteString(fpPathStyle.Render(p.dir))
+	sb.WriteString("\n")
+	rulerLen := len(p.dir) + 2
+	if rulerLen > 72 {
+		rulerLen = 72
+	}
+	sb.WriteString(fpDisabledStyle.Render(strings.Repeat("─", rulerLen)))
+	sb.WriteString("\n")
+
+	if p.Err != nil {
+		sb.WriteString(fpErrStyle.Render("Error: " + p.Err.Error()))
+		sb.WriteString("\n")
+	}
+
+	if len(p.entries) == 0 {
+		sb.WriteString(fpDisabledStyle.Render("  (empty directory)"))
+		sb.WriteString("\n")
+	}
+
+	// List entries within viewport
+	end := p.offset + p.height
+	if end > len(p.entries) {
+		end = len(p.entries)
+	}
+
+	for i := p.offset; i < end; i++ {
+		e := p.entries[i]
+		prefix := "  "
+		if i == p.cursor {
+			prefix = "> "
+		}
+
+		name := e.name
+		if e.isDir && name != ".." {
+			name += "/"
+		}
+
+		var style lipgloss.Style
+		if i == p.cursor {
+			style = fpCursorStyle
+		} else if e.isDir {
+			style = fpDirStyle
+		} else if p.Mode == ModeDir {
+			// Files are not selectable in directory mode
+			style = fpDisabledStyle
+		} else if !p.matchesFilter(filepath.Join(p.dir, e.name)) {
+			style = fpDisabledStyle
+		} else {
+			style = fpFileStyle
+		}
+
+		sb.WriteString(style.Render(prefix + name))
+		sb.WriteString("\n")
+	}
+
+	// Help footer
+	sb.WriteString("\n")
+	if p.Mode == ModeDir {
+		sb.WriteString(fpHelpStyle.Render("enter open  space select dir  backspace parent  ~ home  esc cancel"))
+	} else {
+		sb.WriteString(fpHelpStyle.Render("enter open/select  backspace parent  ~ home  esc cancel"))
+	}
+
+	return sb.String()
 }

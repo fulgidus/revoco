@@ -141,13 +141,13 @@ func (m ReportModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filter.Blur()
 				return m, nil
 			}
-			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
 		case "enter":
 			if m.filter.Focused() {
 				m.filter.Blur()
 				return m, nil
 			}
-			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
 		case "/":
 			if !m.filter.Focused() {
 				m.filter.Focus()
@@ -169,10 +169,7 @@ func (m ReportModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Forward to table for mouse scroll
-	var cmd tea.Cmd
-	m.tbl, cmd = m.tbl.Update(msg)
-	return m, cmd
+	return m, nil
 }
 
 // View implements tea.Model.
@@ -240,6 +237,6 @@ func (m ReportModel) View() string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("↑/↓ scroll  /  filter  q/esc return to menu"))
+	sb.WriteString(helpStyle.Render("↑/↓ scroll  /  filter  q/esc return to sessions"))
 	return sb.String()
 }

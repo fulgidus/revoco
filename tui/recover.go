@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,10 +50,16 @@ type RecoverModel struct {
 }
 
 // NewRecoverModel builds a RecoverModel ready to run.
-func NewRecoverModel(cookieJar, inputJSON string, width, height int) RecoverModel {
+// sessionDir, if non-empty, directs logs to the session folder.
+func NewRecoverModel(cookieJar, inputJSON, sessionDir string, width, height int) RecoverModel {
+	outputDir := "./recovered"
+	if sessionDir != "" {
+		outputDir = filepath.Join(sessionDir, "recovered")
+	}
 	cfg := engine.RecoverConfig{
 		InputJSON:   inputJSON,
-		OutputDir:   "./recovered",
+		OutputDir:   outputDir,
+		SessionDir:  sessionDir,
 		CookieJar:   cookieJar,
 		Concurrency: 3,
 		Delay:       1.0,
@@ -169,15 +176,11 @@ func (m RecoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.MouseMsg:
-		logCmd := m.log.Update(msg)
-		return m, logCmd
-
 	case tea.KeyMsg:
 		if m.done {
 			switch msg.String() {
 			case "q", "esc", "enter":
-				return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+				return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
 			}
 		}
 	}
