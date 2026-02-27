@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fulgidus/revoco/filedate"
+	"github.com/fulgidus/revoco/internal/tools"
 	"github.com/fulgidus/revoco/metadata"
 )
 
@@ -25,7 +26,11 @@ type ExifTool struct {
 
 // NewExifTool starts a persistent exiftool process.
 func NewExifTool() (*ExifTool, error) {
-	cmd := exec.Command("exiftool", "-stay_open", "true", "-@", "-")
+	exiftoolBin, err := tools.FindTool("exiftool")
+	if err != nil {
+		return nil, fmt.Errorf("exiftool not available: %w", err)
+	}
+	cmd := exec.Command(exiftoolBin, "-stay_open", "true", "-@", "-")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("exiftool stdin: %w", err)

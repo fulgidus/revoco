@@ -61,14 +61,16 @@ type CookieRow struct {
 	HTTPOnly  bool
 }
 
-// ChromeDecryptor can decrypt Chrome cookies using the v10/v11 scheme.
+// ChromeDecryptor can decrypt Chrome cookies using the v10/v11 scheme on
+// Linux/macOS, and the v20 AES-256-GCM scheme on Windows (Chrome ≥ 127).
 type ChromeDecryptor struct {
 	keyV10 []byte
 	keyV11 []byte
+	keyV20 []byte // Windows App-Bound AES-256 key; nil on other platforms
 }
 
-// NewChromeDecryptor creates a decryptor.
-// password is the v11 key material (e.g. from KWallet "Chrome Safe Storage").
+// NewChromeDecryptor creates a decryptor for v10/v11 (PBKDF2-based) cookies.
+// password is the v11 key material (e.g. from KWallet / macOS Keychain).
 // Pass "" to use an empty password for v11 (Chrome default on many Linux setups).
 func NewChromeDecryptor(password string) *ChromeDecryptor {
 	return &ChromeDecryptor{
@@ -77,11 +79,23 @@ func NewChromeDecryptor(password string) *ChromeDecryptor {
 	}
 }
 
+// NewChromeDecryptorFromKey creates a decryptor with a raw AES key (Windows v20).
+// The keyV10/keyV11 fields are populated with the peanuts / empty-password defaults
+// as a fallback for any v10/v11 cookies that may still be present.
+func NewChromeDecryptorFromKey(aesKey []byte) *ChromeDecryptor {
+	return &ChromeDecryptor{
+		keyV10: deriveKey(v10Password),
+		keyV11: deriveKey(""),
+		keyV20: aesKey,
+	}
+}
+
 func deriveKey(password string) []byte {
 	return pbkdf2.Key([]byte(password), []byte(chromeSalt), chromeIter, chromeKeyLen, sha1.New)
 }
 
 // Decrypt decrypts an encrypted_value blob from Chrome's cookies table.
+// Handles v10, v11 (PBKDF2 AES-128-CBC) and v20 (App-Bound AES-256-GCM, Windows only).
 func (d *ChromeDecryptor) Decrypt(enc []byte) (string, error) {
 	if len(enc) == 0 {
 		return "", nil
@@ -92,6 +106,11 @@ func (d *ChromeDecryptor) Decrypt(enc []byte) (string, error) {
 
 	prefix := string(enc[:3])
 	switch prefix {
+	case "v20":
+		if d.keyV20 != nil {
+			return decryptV20(enc, d.keyV20)
+		}
+		return "", fmt.Errorf("v20 cookie encountered but no AES-256 key available (Windows only)")
 	case "v11":
 		val, err := d.decryptAES(enc[3:], d.keyV11, 32)
 		if err != nil {
@@ -109,6 +128,31 @@ func (d *ChromeDecryptor) Decrypt(enc []byte) (string, error) {
 	default:
 		return string(enc), nil
 	}
+}
+
+// decryptV20 decrypts a v20 (AES-256-GCM) cookie blob.
+// Format after stripping "v20": 12-byte nonce + ciphertext+tag.
+func decryptV20(enc []byte, aesKey []byte) (string, error) {
+	payload := enc[3:] // strip "v20"
+	if len(payload) < 12+16 {
+		return "", fmt.Errorf("v20 blob too short")
+	}
+	nonce := payload[:12]
+	ciphertext := payload[12:]
+
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return "", fmt.Errorf("aes cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("aes-gcm: %w", err)
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("gcm open: %w", err)
+	}
+	return string(plaintext), nil
 }
 
 // decryptAES performs AES-128-CBC decryption with manual PKCS7 unpadding,

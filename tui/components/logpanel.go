@@ -3,24 +3,18 @@ package components
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	logNormal = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	logError  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	logBorder = lipgloss.NewStyle().
+	logNormalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	logErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	logBorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("238"))
 )
-
-// LogPanel is a scrolling log view that shows the last N lines.
-type LogPanel struct {
-	Lines    []LogLine
-	MaxLines int
-	Width    int
-	Height   int
-}
 
 // LogLine is a single entry in the log panel.
 type LogLine struct {
@@ -28,41 +22,80 @@ type LogLine struct {
 	IsError bool
 }
 
-// NewLogPanel creates a LogPanel with the given dimensions and max capacity.
+// LogPanel is a scrollable log view backed by bubbles/viewport with mouse
+// wheel support and auto-follow when at the bottom.
+type LogPanel struct {
+	Width    int
+	Height   int
+	MaxLines int
+
+	lines    []LogLine
+	vp       viewport.Model
+	atBottom bool
+}
+
+// NewLogPanel creates a LogPanel with the given dimensions and max line capacity.
 func NewLogPanel(width, height, maxLines int) LogPanel {
-	return LogPanel{Width: width, Height: height, MaxLines: maxLines}
+	vp := viewport.New(width, height)
+	return LogPanel{
+		Width:    width,
+		Height:   height,
+		MaxLines: maxLines,
+		vp:       vp,
+		atBottom: true,
+	}
 }
 
-// Append adds a line to the panel, evicting the oldest if over capacity.
+// Append adds a line, evicting the oldest if over capacity, and refreshes content.
 func (l *LogPanel) Append(text string, isErr bool) {
-	l.Lines = append(l.Lines, LogLine{Text: text, IsError: isErr})
-	if len(l.Lines) > l.MaxLines {
-		l.Lines = l.Lines[len(l.Lines)-l.MaxLines:]
+	l.lines = append(l.lines, LogLine{Text: text, IsError: isErr})
+	if len(l.lines) > l.MaxLines {
+		l.lines = l.lines[len(l.lines)-l.MaxLines:]
+	}
+	l.vp.SetContent(l.buildContent())
+	if l.atBottom {
+		l.vp.GotoBottom()
 	}
 }
 
-// View renders the log panel, showing the last Height lines.
-func (l LogPanel) View() string {
-	visible := l.Lines
-	if len(visible) > l.Height {
-		visible = visible[len(visible)-l.Height:]
-	}
+// Resize updates the viewport dimensions.
+func (l *LogPanel) Resize(width, height int) {
+	l.Width = width
+	l.Height = height
+	l.vp.Width = width
+	l.vp.Height = height
+	l.vp.SetContent(l.buildContent())
+}
 
+// Update handles mouse scroll and keyboard events for the viewport.
+func (l *LogPanel) Update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	l.vp, cmd = l.vp.Update(msg)
+	l.atBottom = l.vp.AtBottom()
+	return cmd
+}
+
+// View renders the log panel with a rounded border.
+func (l LogPanel) View() string {
+	l.vp.Width = l.Width
+	l.vp.Height = l.Height
+	return logBorderStyle.Width(l.Width).Height(l.Height).Render(l.vp.View())
+}
+
+func (l *LogPanel) buildContent() string {
 	var sb strings.Builder
-	for _, line := range visible {
+	for _, line := range l.lines {
 		text := line.Text
-		if len([]rune(text)) > l.Width-4 {
+		if l.Width > 6 && len([]rune(text)) > l.Width-6 {
 			runes := []rune(text)
-			text = string(runes[:l.Width-7]) + "..."
+			text = string(runes[:l.Width-9]) + "..."
 		}
 		if line.IsError {
-			sb.WriteString(logError.Render(text))
+			sb.WriteString(logErrorStyle.Render(text))
 		} else {
-			sb.WriteString(logNormal.Render(text))
+			sb.WriteString(logNormalStyle.Render(text))
 		}
 		sb.WriteString("\n")
 	}
-
-	content := strings.TrimRight(sb.String(), "\n")
-	return logBorder.Width(l.Width).Height(l.Height).Render(content)
+	return strings.TrimRight(sb.String(), "\n")
 }

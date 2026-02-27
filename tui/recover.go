@@ -15,9 +15,6 @@ import (
 // recoverTickMsg fires on a timer.
 type recoverTickMsg time.Time
 
-// recoverEventMsg wraps a RecoverEvent.
-type recoverEventMsg engine.RecoverEvent
-
 // recoverDoneMsg signals recovery completed.
 type recoverDoneMsg struct {
 	result *engine.RecoverResult
@@ -29,17 +26,26 @@ var (
 )
 
 // RecoverModel is the TUI screen for a recovery run.
+// Layout: top — download progress bar + sparkline,
+//
+//	middle — live log panel,
+//	bottom — stats bar.
 type RecoverModel struct {
 	cfg       engine.RecoverConfig
 	eventsCh  chan engine.RecoverEvent
 	bar       components.PhaseBar
 	log       components.LogPanel
+	sparkline components.Sparkline
 	result    *engine.RecoverResult
 	err       error
 	done      bool
 	width     int
 	height    int
 	startTime time.Time
+
+	// throughput tracking
+	lastItems int
+	lastTick  time.Time
 }
 
 // NewRecoverModel builds a RecoverModel ready to run.
@@ -54,25 +60,30 @@ func NewRecoverModel(cookieJar, inputJSON string, width, height int) RecoverMode
 		StartFrom:   1,
 	}
 	ch := make(chan engine.RecoverEvent, 64)
+	logH := height - 8
+	if logH < 4 {
+		logH = 4
+	}
 	return RecoverModel{
-		cfg:      cfg,
-		eventsCh: ch,
-		bar: components.PhaseBar{
-			Label: "Downloading",
-			Width: width - 4,
-		},
-		log:    components.NewLogPanel(width-4, 8, 200),
-		width:  width,
-		height: height,
+		cfg:       cfg,
+		eventsCh:  ch,
+		bar:       components.PhaseBar{Label: "Downloading", Width: width - 4},
+		log:       components.NewLogPanel(width-4, logH, 500),
+		sparkline: components.NewSparkline(width-4, "files/s"),
+		width:     width,
+		height:    height,
+		startTime: time.Now(),
+		lastTick:  time.Now(),
 	}
 }
 
 // Init implements tea.Model — starts the recovery pipeline and a tick.
 func (m RecoverModel) Init() tea.Cmd {
-	m.startTime = time.Now()
 	cfg := m.cfg
 	ch := m.eventsCh
+	barCmd := m.bar.Init()
 	return tea.Batch(
+		barCmd,
 		func() tea.Msg {
 			result, err := engine.RunRecover(cfg, ch)
 			return recoverDoneMsg{result: result, err: err}
@@ -93,27 +104,57 @@ func (m RecoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.log.Width = msg.Width - 4
+		logH := msg.Height - 8
+		if logH < 4 {
+			logH = 4
+		}
+		m.log.Resize(msg.Width-4, logH)
 		m.bar.Width = msg.Width - 4
+		m.sparkline.Width = msg.Width - 4
 		return m, nil
 
 	case recoverTickMsg:
+		var cmds []tea.Cmd
 		for {
 			select {
 			case ev, ok := <-m.eventsCh:
 				if !ok {
-					return m, nil
+					goto drained
 				}
 				m.applyEvent(ev)
 			default:
-				goto done
+				goto drained
 			}
 		}
-	done:
-		if !m.done {
-			return m, tickRecover()
+	drained:
+		// Throughput sparkline
+		now := time.Time(msg)
+		elapsed := now.Sub(m.lastTick).Seconds()
+		if elapsed > 0 {
+			delta := m.bar.Done - m.lastItems
+			if delta < 0 {
+				delta = 0
+			}
+			m.sparkline.Push(float64(delta) / elapsed)
+			m.lastItems = m.bar.Done
+			m.lastTick = now
 		}
-		return m, nil
+
+		// Update spinner
+		spinCmd := m.bar.UpdateSpinner(msg)
+		if spinCmd != nil {
+			cmds = append(cmds, spinCmd)
+		}
+
+		logCmd := m.log.Update(msg)
+		if logCmd != nil {
+			cmds = append(cmds, logCmd)
+		}
+
+		if !m.done {
+			cmds = append(cmds, tickRecover())
+		}
+		return m, tea.Batch(cmds...)
 
 	case recoverDoneMsg:
 		m.done = true
@@ -128,6 +169,10 @@ func (m RecoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		logCmd := m.log.Update(msg)
+		return m, logCmd
+
 	case tea.KeyMsg:
 		if m.done {
 			switch msg.String() {
@@ -136,7 +181,9 @@ func (m RecoverModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+
+	logCmd := m.log.Update(msg)
+	return m, logCmd
 }
 
 func (m *RecoverModel) applyEvent(ev engine.RecoverEvent) {
@@ -158,28 +205,44 @@ func (m RecoverModel) View() string {
 	sb.WriteString("\n\n")
 
 	sb.WriteString(m.bar.View())
+	sb.WriteString("\n")
+	sb.WriteString(statLabelStyle.Render("Download rate"))
+	sb.WriteString("\n")
+	sb.WriteString(m.sparkline.View())
 	sb.WriteString("\n\n")
 
-	if m.err != nil {
-		sb.WriteString(errorMsgStyle.Render("Error: " + m.err.Error()))
-		sb.WriteString("\n\n")
-	} else if m.done && m.result != nil {
+	sb.WriteString(m.log.View())
+	sb.WriteString("\n")
+
+	// Stats bar at bottom
+	sb.WriteString(m.buildStatsBar())
+
+	return sb.String()
+}
+
+func (m RecoverModel) buildStatsBar() string {
+	elapsed := time.Since(m.startTime).Round(time.Second)
+	parts := []string{fmt.Sprintf("Elapsed: %s", elapsed)}
+
+	if m.result != nil {
 		r := m.result
-		sb.WriteString(statValueStyle.Render(fmt.Sprintf(
-			"Downloaded: %d  Skipped: %d  Failed: %d",
-			r.Downloaded, r.Skipped, r.Failed,
-		)))
-		sb.WriteString("\n")
-		elapsed := time.Since(m.startTime).Round(time.Second)
-		sb.WriteString(statLabelStyle.Render(fmt.Sprintf("Elapsed: %s", elapsed)))
+		parts = append(parts,
+			fmt.Sprintf("Downloaded: %d", r.Downloaded),
+			fmt.Sprintf("Skipped: %d", r.Skipped),
+			fmt.Sprintf("Failed: %d", r.Failed),
+		)
 		if r.FailedPath != "" {
-			sb.WriteString("\n")
-			sb.WriteString(statLabelStyle.Render("Failed list: " + r.FailedPath))
+			parts = append(parts, "Failed list: "+r.FailedPath)
 		}
-		sb.WriteString("\n\n")
-		sb.WriteString(helpStyle.Render("enter/q to return to menu"))
+	} else {
+		parts = append(parts,
+			fmt.Sprintf("Downloaded: %d / %d", m.bar.Done, m.bar.Total),
+		)
 	}
 
-	sb.WriteString(m.log.View())
-	return sb.String()
+	if m.done {
+		parts = append(parts, "enter/q to return")
+	}
+
+	return statsBarStyle.Width(m.width).Render(strings.Join(parts, "  ·  "))
 }

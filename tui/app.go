@@ -10,6 +10,7 @@ type Screen int
 
 const (
 	ScreenWelcome Screen = iota
+	ScreenAnalyze
 	ScreenProcess
 	ScreenRecover
 	ScreenReport
@@ -19,6 +20,7 @@ const (
 type App struct {
 	screen  Screen
 	welcome WelcomeModel
+	analyze AnalyzeModel
 	process ProcessModel
 	recover RecoverModel
 	report  ReportModel
@@ -45,25 +47,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		// propagate to active sub-model
-		switch a.screen {
-		case ScreenWelcome:
-			m, cmd := a.welcome.Update(msg)
-			a.welcome = m.(WelcomeModel)
-			return a, cmd
-		case ScreenProcess:
-			m, cmd := a.process.Update(msg)
-			a.process = m.(ProcessModel)
-			return a, cmd
-		case ScreenRecover:
-			m, cmd := a.recover.Update(msg)
-			a.recover = m.(RecoverModel)
-			return a, cmd
-		case ScreenReport:
-			m, cmd := a.report.Update(msg)
-			a.report = m.(ReportModel)
-			return a, cmd
-		}
+		return a.propagateSize(msg)
 
 	case SwitchScreenMsg:
 		return a.switchScreen(msg)
@@ -75,10 +59,46 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Delegate to active screen
+	return a.delegateMsg(msg)
+}
+
+// propagateSize sends a WindowSizeMsg to the active screen.
+func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	switch a.screen {
 	case ScreenWelcome:
 		m, cmd := a.welcome.Update(msg)
 		a.welcome = m.(WelcomeModel)
+		return a, cmd
+	case ScreenAnalyze:
+		m, cmd := a.analyze.Update(msg)
+		a.analyze = m.(AnalyzeModel)
+		return a, cmd
+	case ScreenProcess:
+		m, cmd := a.process.Update(msg)
+		a.process = m.(ProcessModel)
+		return a, cmd
+	case ScreenRecover:
+		m, cmd := a.recover.Update(msg)
+		a.recover = m.(RecoverModel)
+		return a, cmd
+	case ScreenReport:
+		m, cmd := a.report.Update(msg)
+		a.report = m.(ReportModel)
+		return a, cmd
+	}
+	return a, nil
+}
+
+// delegateMsg forwards any message to the currently active screen model.
+func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch a.screen {
+	case ScreenWelcome:
+		m, cmd := a.welcome.Update(msg)
+		a.welcome = m.(WelcomeModel)
+		return a, cmd
+	case ScreenAnalyze:
+		m, cmd := a.analyze.Update(msg)
+		a.analyze = m.(AnalyzeModel)
 		return a, cmd
 	case ScreenProcess:
 		m, cmd := a.process.Update(msg)
@@ -99,6 +119,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (a App) View() string {
 	switch a.screen {
+	case ScreenAnalyze:
+		return a.analyze.View()
 	case ScreenProcess:
 		return a.process.View()
 	case ScreenRecover:
@@ -113,6 +135,7 @@ func (a App) View() string {
 // SwitchScreenMsg is sent to navigate between screens.
 type SwitchScreenMsg struct {
 	To      Screen
+	Analyze *AnalyzeModel
 	Process *ProcessModel
 	Recover *RecoverModel
 	Report  *ReportModel
@@ -121,6 +144,11 @@ type SwitchScreenMsg struct {
 func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 	a.screen = msg.To
 	switch msg.To {
+	case ScreenAnalyze:
+		if msg.Analyze != nil {
+			a.analyze = *msg.Analyze
+		}
+		return a, a.analyze.Init()
 	case ScreenProcess:
 		if msg.Process != nil {
 			a.process = *msg.Process

@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/fulgidus/revoco/internal/tools"
 )
 
 // ConvertMotionPhotos finds .MP and .COVER files in destMap and converts them
@@ -31,7 +33,13 @@ func ConvertMotionPhotos(destMap map[string]string, dryRun bool, progress func(d
 			continue
 		}
 
-		cmd := exec.Command("ffmpeg",
+		ffmpegBin, ffErr := tools.FindTool("ffmpeg")
+		if ffErr != nil {
+			errs = append(errs, fmt.Errorf("ffmpeg not available: %w", ffErr))
+			continue
+		}
+
+		cmd := exec.Command(ffmpegBin,
 			"-y",
 			"-i", src,
 			"-map", "0:0",
