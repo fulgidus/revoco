@@ -605,6 +605,17 @@ func (m WelcomeModel) sessionLabel() string {
 
 func (m WelcomeModel) viewSinglePanel() string {
 	var sb strings.Builder
+
+	// When showRight is true in single-panel mode, show the config panel instead of menu
+	if m.showRight {
+		sb.WriteString(titleStyle.Render("revoco"))
+		sb.WriteString("\n")
+		sb.WriteString(sessionNameStyle.Render("Session: " + m.sessionLabel()))
+		sb.WriteString("\n\n")
+		sb.WriteString(m.viewConfigPanel(m.width - 4))
+		return sb.String()
+	}
+
 	sb.WriteString(titleStyle.Render("revoco"))
 	sb.WriteString("\n")
 	sb.WriteString(sessionNameStyle.Render("Session: " + m.sessionLabel()))
