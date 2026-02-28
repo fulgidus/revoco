@@ -27,6 +27,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	core "github.com/fulgidus/revoco/connectors"
 )
 
 // baseDir returns ~/.revoco/sessions.
@@ -64,6 +66,159 @@ type RecoverSettings struct {
 	StartFrom   int     `json:"start_from"`
 }
 
+// ProcessorSettings holds service-specific processor configuration.
+// Each service can store arbitrary settings as a JSON object.
+type ProcessorSettings map[string]any
+
+// OutputSettings holds output-specific configuration.
+type OutputSettings struct {
+	OutputID string         `json:"output_id"` // registered output identifier
+	Config   map[string]any `json:"config"`    // output-specific configuration
+}
+
+// PipelineConfig holds the complete pipeline configuration for a session.
+// DEPRECATED: Use ConnectorsConfig for new sessions.
+type PipelineConfig struct {
+	ServiceID         string            `json:"service_id"`         // e.g., "googlephotos", "youtubemusic"
+	IngesterID        string            `json:"ingester_id"`        // e.g., "folder", "zip", "tgz"
+	ProcessorSettings ProcessorSettings `json:"processor_settings"` // service-specific processor config
+	OutputSettings    []OutputSettings  `json:"output_settings"`    // one or more outputs
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Connector-Based Configuration (New Architecture)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ConnectorsConfig holds the connector-based configuration for a session.
+type ConnectorsConfig struct {
+	// Connectors holds all configured connector instances
+	Connectors []core.ConnectorConfig `json:"connectors"`
+
+	// ProcessorConfigs holds processor configuration
+	ProcessorConfigs []core.ProcessorConfig `json:"processor_configs,omitempty"`
+
+	// AutoProcess enables automatic processing after retrieval
+	AutoProcess bool `json:"auto_process"`
+
+	// ParallelRetrieval enables parallel data retrieval from multiple input connectors
+	ParallelRetrieval bool `json:"parallel_retrieval"`
+
+	// DetectedDataTypes stores data types found during scan
+	DetectedDataTypes []core.DataType `json:"detected_data_types,omitempty"`
+
+	// Stats holds current statistics
+	Stats *core.DataStats `json:"stats,omitempty"`
+}
+
+// GetInputConnectors returns all connectors configured as input.
+func (cc *ConnectorsConfig) GetInputConnectors() []core.ConnectorConfig {
+	var inputs []core.ConnectorConfig
+	for _, c := range cc.Connectors {
+		if c.Enabled && c.Roles.IsInput {
+			inputs = append(inputs, c)
+		}
+	}
+	return inputs
+}
+
+// GetOutputConnectors returns all connectors configured as output.
+func (cc *ConnectorsConfig) GetOutputConnectors() []core.ConnectorConfig {
+	var outputs []core.ConnectorConfig
+	for _, c := range cc.Connectors {
+		if c.Enabled && c.Roles.IsOutput {
+			outputs = append(outputs, c)
+		}
+	}
+	return outputs
+}
+
+// GetFallbackConnectors returns all connectors configured as fallback.
+func (cc *ConnectorsConfig) GetFallbackConnectors() []core.ConnectorConfig {
+	var fallbacks []core.ConnectorConfig
+	for _, c := range cc.Connectors {
+		if c.Enabled && c.Roles.IsFallback {
+			fallbacks = append(fallbacks, c)
+		}
+	}
+	return fallbacks
+}
+
+// GetFallbacksFor returns fallback connectors for a specific connector instance.
+func (cc *ConnectorsConfig) GetFallbacksFor(instanceID string) []core.ConnectorConfig {
+	var fallbacks []core.ConnectorConfig
+	for _, c := range cc.Connectors {
+		if !c.Enabled {
+			continue
+		}
+		for _, fbFor := range c.FallbackFor {
+			if fbFor == instanceID {
+				fallbacks = append(fallbacks, c)
+				break
+			}
+		}
+	}
+	return fallbacks
+}
+
+// GetConnector returns a connector by instance ID.
+func (cc *ConnectorsConfig) GetConnector(instanceID string) (core.ConnectorConfig, bool) {
+	for _, c := range cc.Connectors {
+		if c.InstanceID == instanceID {
+			return c, true
+		}
+	}
+	return core.ConnectorConfig{}, false
+}
+
+// AddConnector adds a new connector configuration.
+func (cc *ConnectorsConfig) AddConnector(cfg core.ConnectorConfig) {
+	cc.Connectors = append(cc.Connectors, cfg)
+}
+
+// UpdateConnector updates an existing connector by instance ID.
+func (cc *ConnectorsConfig) UpdateConnector(cfg core.ConnectorConfig) bool {
+	for i, c := range cc.Connectors {
+		if c.InstanceID == cfg.InstanceID {
+			cc.Connectors[i] = cfg
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveConnector removes a connector by instance ID.
+func (cc *ConnectorsConfig) RemoveConnector(instanceID string) bool {
+	for i, c := range cc.Connectors {
+		if c.InstanceID == instanceID {
+			cc.Connectors = append(cc.Connectors[:i], cc.Connectors[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// EnableConnector enables a connector by instance ID.
+func (cc *ConnectorsConfig) EnableConnector(instanceID string) bool {
+	for i, c := range cc.Connectors {
+		if c.InstanceID == instanceID {
+			cc.Connectors[i].Enabled = true
+			return true
+		}
+	}
+	return false
+}
+
+// DisableConnector disables a connector by instance ID.
+func (cc *ConnectorsConfig) DisableConnector(instanceID string) bool {
+	for i, c := range cc.Connectors {
+		if c.InstanceID == instanceID {
+			cc.Connectors[i].Enabled = false
+			return true
+		}
+	}
+	return false
+}
+
 // Status describes the current state of a session.
 type Status string
 
@@ -88,6 +243,22 @@ type Config struct {
 	Status             Status          `json:"status"`
 	LastPhaseCompleted int             `json:"last_phase_completed"`
 	LastError          string          `json:"last_error,omitempty"`
+
+	// Multi-service pipeline configuration (legacy)
+	// DEPRECATED: Use Connectors for new sessions
+	Pipeline PipelineConfig `json:"pipeline,omitempty"`
+
+	// Connector-based configuration (new architecture)
+	Connectors ConnectorsConfig `json:"connectors,omitempty"`
+
+	// Version indicates the config schema version
+	// 1 = legacy pipeline-based, 2 = connector-based
+	Version int `json:"version,omitempty"`
+}
+
+// IsConnectorBased returns true if this session uses the new connector architecture.
+func (c *Config) IsConnectorBased() bool {
+	return c.Version >= 2 || len(c.Connectors.Connectors) > 0
 }
 
 // Session is the in-memory representation of a work session.
@@ -134,6 +305,148 @@ func (s *Session) SourcePath() string {
 // LogPath returns the path for a log file within the session.
 func (s *Session) LogPath(name string) string {
 	return filepath.Join(s.Dir, name)
+}
+
+// ServiceID returns the configured service ID, defaulting to "googlephotos" for backwards compatibility.
+func (s *Session) ServiceID() string {
+	if s.Config.Pipeline.ServiceID == "" {
+		return "googlephotos"
+	}
+	return s.Config.Pipeline.ServiceID
+}
+
+// SetServiceID sets the service for this session's pipeline.
+func (s *Session) SetServiceID(serviceID string) {
+	s.Config.Pipeline.ServiceID = serviceID
+}
+
+// SetIngesterID sets the ingester for this session's pipeline.
+func (s *Session) SetIngesterID(ingesterID string) {
+	s.Config.Pipeline.IngesterID = ingesterID
+}
+
+// SetProcessorSettings sets the processor configuration for this session.
+func (s *Session) SetProcessorSettings(settings ProcessorSettings) {
+	s.Config.Pipeline.ProcessorSettings = settings
+}
+
+// GetProcessorSetting retrieves a single processor setting by key.
+func (s *Session) GetProcessorSetting(key string) (any, bool) {
+	if s.Config.Pipeline.ProcessorSettings == nil {
+		return nil, false
+	}
+	v, ok := s.Config.Pipeline.ProcessorSettings[key]
+	return v, ok
+}
+
+// GetProcessorSettingBool retrieves a boolean processor setting with a default.
+func (s *Session) GetProcessorSettingBool(key string, defaultVal bool) bool {
+	v, ok := s.GetProcessorSetting(key)
+	if !ok {
+		return defaultVal
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return defaultVal
+}
+
+// GetProcessorSettingString retrieves a string processor setting with a default.
+func (s *Session) GetProcessorSettingString(key string, defaultVal string) string {
+	v, ok := s.GetProcessorSetting(key)
+	if !ok {
+		return defaultVal
+	}
+	if str, ok := v.(string); ok {
+		return str
+	}
+	return defaultVal
+}
+
+// AddOutputSetting adds an output configuration to the pipeline.
+func (s *Session) AddOutputSetting(outputID string, config map[string]any) {
+	s.Config.Pipeline.OutputSettings = append(s.Config.Pipeline.OutputSettings, OutputSettings{
+		OutputID: outputID,
+		Config:   config,
+	})
+}
+
+// ClearOutputSettings removes all output configurations.
+func (s *Session) ClearOutputSettings() {
+	s.Config.Pipeline.OutputSettings = nil
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Connector-Based Session Methods
+// ══════════════════════════════════════════════════════════════════════════════
+
+// IsConnectorBased returns true if this session uses the new connector architecture.
+func (s *Session) IsConnectorBased() bool {
+	return s.Config.IsConnectorBased()
+}
+
+// AddConnector adds a connector to this session.
+func (s *Session) AddConnector(cfg core.ConnectorConfig) {
+	s.Config.Connectors.AddConnector(cfg)
+	// Upgrade version if needed
+	if s.Config.Version < 2 {
+		s.Config.Version = 2
+	}
+}
+
+// GetConnector returns a connector by instance ID.
+func (s *Session) GetConnector(instanceID string) (core.ConnectorConfig, bool) {
+	return s.Config.Connectors.GetConnector(instanceID)
+}
+
+// UpdateConnector updates an existing connector configuration.
+func (s *Session) UpdateConnector(cfg core.ConnectorConfig) bool {
+	return s.Config.Connectors.UpdateConnector(cfg)
+}
+
+// RemoveConnector removes a connector by instance ID.
+func (s *Session) RemoveConnector(instanceID string) bool {
+	return s.Config.Connectors.RemoveConnector(instanceID)
+}
+
+// ListConnectors returns all connector configurations.
+func (s *Session) ListConnectors() []core.ConnectorConfig {
+	return s.Config.Connectors.Connectors
+}
+
+// GetInputConnectors returns connectors configured for input.
+func (s *Session) GetInputConnectors() []core.ConnectorConfig {
+	return s.Config.Connectors.GetInputConnectors()
+}
+
+// GetOutputConnectors returns connectors configured for output.
+func (s *Session) GetOutputConnectors() []core.ConnectorConfig {
+	return s.Config.Connectors.GetOutputConnectors()
+}
+
+// GetFallbackConnectors returns connectors configured as fallbacks.
+func (s *Session) GetFallbackConnectors() []core.ConnectorConfig {
+	return s.Config.Connectors.GetFallbackConnectors()
+}
+
+// SetAutoProcess enables or disables automatic processing.
+func (s *Session) SetAutoProcess(enabled bool) {
+	s.Config.Connectors.AutoProcess = enabled
+}
+
+// SetParallelRetrieval enables or disables parallel data retrieval.
+func (s *Session) SetParallelRetrieval(enabled bool) {
+	s.Config.Connectors.ParallelRetrieval = enabled
+}
+
+// DataDir returns the path for storing imported data within the session.
+func (s *Session) DataDir() string {
+	return filepath.Join(s.Dir, "data")
+}
+
+// CredentialsDir returns the path for session-specific credentials.
+func (s *Session) CredentialsDir() string {
+	return filepath.Join(s.Dir, "credentials")
 }
 
 // Save persists the session config to disk.
@@ -193,6 +506,80 @@ func Create(name string) (*Session, error) {
 				Delay:       1.0,
 				MaxRetry:    3,
 				StartFrom:   1,
+			},
+			// Default pipeline configuration for backwards compatibility
+			Pipeline: PipelineConfig{
+				ServiceID:  "googlephotos",
+				IngesterID: "folder",
+				ProcessorSettings: ProcessorSettings{
+					"embed_exif":      true,
+					"organize_albums": true,
+					"deduplicate":     true,
+					"convert_motion":  true,
+					"use_move":        false,
+				},
+			},
+		},
+	}
+
+	if err := s.Save(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// CreateV2 creates a new session using the connector-based architecture.
+// The session starts empty and connectors are added later.
+func CreateV2(name string) (*Session, error) {
+	if name == "" {
+		return nil, fmt.Errorf("session: name cannot be empty")
+	}
+	if strings.ContainsAny(name, "/\\:*?\"<>|") {
+		return nil, fmt.Errorf("session: name contains invalid characters")
+	}
+
+	dir, err := Dir(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(dir); err == nil {
+		return nil, fmt.Errorf("session: %q already exists", name)
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("session: create dir: %w", err)
+	}
+
+	// Create sub-directories for new architecture
+	for _, sub := range []string{"output", "recovered", "data", "credentials"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			return nil, fmt.Errorf("session: create %s dir: %w", sub, err)
+		}
+	}
+
+	now := time.Now()
+	s := &Session{
+		Dir: dir,
+		Config: Config{
+			Name:      name,
+			Created:   now,
+			Updated:   now,
+			OutputDir: "output",
+			Status:    StatusIdle,
+			Version:   2, // Connector-based architecture
+			Recover: RecoverSettings{
+				InputJSON:   "missing-files.json",
+				OutputDir:   "recovered",
+				Concurrency: 3,
+				Delay:       1.0,
+				MaxRetry:    3,
+				StartFrom:   1,
+			},
+			Connectors: ConnectorsConfig{
+				Connectors:        []core.ConnectorConfig{},
+				ParallelRetrieval: true, // Smart default
+				AutoProcess:       false,
 			},
 		},
 	}
