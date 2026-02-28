@@ -155,6 +155,17 @@ func IndexFiles(gfotoPath string, progress func(done, total int)) (*IndexResult,
 			}
 		}
 
+		// Strategy 2b: same directory + JSON named "mediafile.ext.json" → "mediafile.ext"
+		// This handles the common Google Takeout pattern where JSON is simply filename + .json
+		if !matched {
+			stem := strings.TrimSuffix(base, ".json") // e.g., "IMG_123.jpg.json" → "IMG_123.jpg"
+			candidate := filepath.Join(dir, stem)
+			if _, ok := result.MediaFiles[candidate]; ok {
+				result.MediaFiles[candidate] = jsonPath
+				matched = true
+			}
+		}
+
 		// Strategy 3: global basename search by title
 		if !matched && title != "" {
 			if candidates, ok := mediaByName[title]; ok && len(candidates) == 1 {
