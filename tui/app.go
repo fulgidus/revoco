@@ -167,36 +167,41 @@ func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 		a.activeSession = msg.Session
 	}
 
+	// Helper to send current window size to newly created screen
+	sizeCmd := func() tea.Msg {
+		return tea.WindowSizeMsg{Width: a.width, Height: a.height}
+	}
+
 	switch msg.To {
 	case ScreenSessions:
 		a.sessions = NewSessionsModel()
 		a.activeSession = nil
-		return a, a.sessions.Init()
+		return a, tea.Batch(a.sessions.Init(), sizeCmd)
 	case ScreenWelcome:
 		a.welcome = NewWelcomeModel(a.activeSession)
-		return a, a.welcome.Init()
+		return a, tea.Batch(a.welcome.Init(), sizeCmd)
 	case ScreenAnalyze:
 		if msg.Analyze != nil {
 			a.analyze = *msg.Analyze
 		}
-		return a, a.analyze.Init()
+		return a, tea.Batch(a.analyze.Init(), sizeCmd)
 	case ScreenProcess:
 		if msg.Process != nil {
 			a.process = *msg.Process
 		}
-		return a, a.process.Init()
+		return a, tea.Batch(a.process.Init(), sizeCmd)
 	case ScreenRecover:
 		if msg.Recover != nil {
 			a.recover = *msg.Recover
 		}
-		return a, a.recover.Init()
+		return a, tea.Batch(a.recover.Init(), sizeCmd)
 	case ScreenReport:
 		if msg.Report != nil {
 			a.report = *msg.Report
 		}
-		return a, a.report.Init()
+		return a, tea.Batch(a.report.Init(), sizeCmd)
 	default:
 		a.sessions = NewSessionsModel()
-		return a, a.sessions.Init()
+		return a, tea.Batch(a.sessions.Init(), sizeCmd)
 	}
 }
