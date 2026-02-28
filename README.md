@@ -1,40 +1,57 @@
 # revoco
 
-**revoco** is a terminal UI (TUI) tool for processing [Google Photos Takeout](https://takeout.google.com) archives and recovering missing files.
-
 ![revoco logo](logo/revoco.png)
+
+**Data liberation tool for escaping big tech walled gardens.**
+
+> **Early Development** — This software is not yet ready for general use. Running it means contributing to its development. Expect rough edges, breaking changes, and incomplete features. Feedback and contributions welcome!
 
 ---
 
-## Features
+## What it does
 
-- **Process Takeout** — scan a Takeout archive, fix metadata (EXIF dates, GPS), handle motion photos, and copy everything into a clean organised destination tree
-- **Recover Missing** — download files that Google omitted from the export, using cookies exported from Chrome
-- **Pre-flight analysis** — before committing to a long run, get a summary: file count, match rate, albums detected, date range, estimated output size, and motion-photo count
-- **Full-screen TUI** — animated spinners, smooth progress bars, an MB/s sparkline throughput graph, a live log panel, and a filterable missing-files report table
-- **Headless / CI mode** — `--no-tui` flag or subcommands for scripted use
-- **Self-contained** — `exiftool` and `ffmpeg` can be bundled inside the binary at build time (no runtime dependencies)
+Revoco helps you take back control of your data by importing from cloud services and exporting to storage you own. Currently focused on Google services (Drive, Photos Takeout), with more connectors planned.
+
+---
+
+## Current Features
+
+- **Google Drive connector** — OAuth2 authentication, file listing, Google Docs/Sheets/Slides export to local formats
+- **Google Photos Takeout processing** — EXIF metadata repair, GPS coordinates, motion photo extraction
+- **Local connectors** — Folder, ZIP, and TGZ archive import with copy/move/reference modes
+- **Connection testing** — Verify connector access before starting operations
+- **Full-screen TUI** — Dashboard, connector wizards, progress tracking, cancellation support
+- **Self-contained builds** — Optional `exiftool` and `ffmpeg` bundling
+
+---
+
+## Architecture
+
+### Connectors
+
+Modular data sources and destinations. Each connector can act as:
+- **Input** — Primary data source for import
+- **Output** — Destination for processed data  
+- **Fallback** — Secondary source for repairing missing files
+
+### Processors
+
+Transform data between import and export: metadata extraction, format conversion, deduplication, organization.
+
+### Sessions
+
+Track import/export operations with versioned schemas, connector configurations, and processing state.
 
 ---
 
 ## Installation
 
-### Pre-built binaries
-
-Download the latest release from the [Releases](https://github.com/fulgidus/revoco/releases) page.
-
-### Build from source
-
-Requires Go 1.21+.
-
 ```sh
-# Dev build (uses exiftool / ffmpeg from PATH)
+# Build from source (requires Go 1.21+)
 make build
 
-# Production build — fetches and embeds exiftool + ffmpeg
-make bundle        # current platform only
-make bundle-all    # all platforms (Linux amd64 only for now)
-make release       # cross-compile linux/darwin/windows amd64 + darwin arm64
+# Or with bundled exiftool + ffmpeg
+make bundle
 ```
 
 ---
@@ -42,51 +59,11 @@ make release       # cross-compile linux/darwin/windows amd64 + darwin arm64
 ## Usage
 
 ```sh
-# Launch the interactive TUI (default)
+# Launch TUI
 ./revoco
 
-# Process a Takeout archive non-interactively
+# Non-interactive processing
 ./revoco process --source ~/Takeout --dest ~/Photos
-
-# Recover missing files
-./revoco recover --cookies cookies.txt --input missing-files.json
-
-# Run any command without the TUI
-./revoco --no-tui process --source ~/Takeout --dest ~/Photos
-```
-
-### Keyboard shortcuts (TUI)
-
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` or `j` / `k` | Navigate menu / fields |
-| `Enter` | Select / confirm |
-| `Tab` | Next field |
-| `Ctrl+O` | Open folder/file browser |
-| `Esc` / `q` | Back / quit |
-| `Ctrl+C` | Force quit |
-
----
-
-## How it works
-
-1. **Process Takeout** reads each album folder, matches media files to their `.json` metadata sidecar, applies EXIF date/GPS fixes via `exiftool`, extracts the video track from motion photos via `ffmpeg`, and writes the result to the destination directory.
-2. **Recover Missing** reads a `missing-files.json` list produced by the process step, then downloads each file from Google Photos using the provided Netscape-format cookie file.
-
-Cookie decryption is handled natively: DPAPI + App-Bound v20 on Windows, Keychain on macOS, KWallet on Linux.
-
----
-
-## Project structure
-
-```
-cmd/          Cobra CLI entry points
-cookies/      Chrome cookie extraction & decryption (all platforms)
-engine/       Core processing pipeline, EXIF, motion photos, recovery
-internal/     Bundled-binary embed + extraction helpers
-tui/          Bubble Tea screens and reusable components
-legacy/       Original Bash / Node.js scripts (kept for reference)
-Makefile      Build, bundle, and release targets
 ```
 
 ---
