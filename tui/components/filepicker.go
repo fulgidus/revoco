@@ -2,6 +2,7 @@
 package components
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,9 @@ const (
 	// ModeFile allows file selection. Enter navigates into directories or
 	// selects the highlighted file.
 	ModeFile
+	// ModeMultiFile allows selecting multiple files. Space toggles selection,
+	// Enter confirms all selections.
+	ModeMultiFile
 )
 
 // fsEntry is one item in the file listing.
@@ -40,12 +44,14 @@ type readDirDoneMsg struct {
 //
 // In ModeDir the user navigates with Enter and confirms the current directory
 // with Space.  In ModeFile the user navigates into directories with Enter and
-// selects a file with Enter.
+// selects a file with Enter. In ModeMultiFile, Space toggles selection and
+// Enter confirms all selected files.
 type FilePicker struct {
-	Mode     PickerMode
-	Selected string
-	Done     bool
-	Err      error
+	Mode          PickerMode
+	Selected      string   // Single selection (ModeDir/ModeFile)
+	MultiSelected []string // Multiple selections (ModeMultiFile)
+	Done          bool
+	Err           error
 
 	dir     string    // current directory being browsed
 	entries []fsEntry // current listing (dirs first, then files)
@@ -53,7 +59,10 @@ type FilePicker struct {
 	offset  int       // scroll viewport top
 	height  int       // visible rows
 
-	// AllowedExts filters selectable files in ModeFile (e.g. []string{".zip"}).
+	// selected tracks toggled files in ModeMultiFile (full paths)
+	selected map[string]bool
+
+	// AllowedExts filters selectable files in ModeFile/ModeMultiFile (e.g. []string{".zip"}).
 	// Empty means all files are allowed.
 	AllowedExts []string
 }
@@ -65,9 +74,10 @@ func NewFilePicker(mode PickerMode) FilePicker {
 		startDir = "."
 	}
 	return FilePicker{
-		Mode:   mode,
-		dir:    startDir,
-		height: 20, // reasonable default; updated on WindowSizeMsg
+		Mode:     mode,
+		dir:      startDir,
+		height:   20, // reasonable default; updated on WindowSizeMsg
+		selected: make(map[string]bool),
 	}
 }
 
@@ -174,10 +184,22 @@ func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 			return p.handleOpen()
 		case "backspace", "h", "left":
 			return p.goParent()
-		case " ": // Space selects the current directory in ModeDir
+		case " ": // Space selects the current directory in ModeDir, toggles in ModeMultiFile
 			if p.Mode == ModeDir {
 				p.Selected = p.dir
 				p.Done = true
+			} else if p.Mode == ModeMultiFile && len(p.entries) > 0 {
+				e := p.entries[p.cursor]
+				if !e.isDir && e.name != ".." {
+					path := filepath.Join(p.dir, e.name)
+					if p.matchesFilter(path) {
+						if p.selected[path] {
+							delete(p.selected, path)
+						} else {
+							p.selected[path] = true
+						}
+					}
+				}
 			}
 		case "~": // Jump to home
 			home, _ := os.UserHomeDir()
@@ -225,6 +247,17 @@ func (p FilePicker) handleOpen() (FilePicker, tea.Cmd) {
 			p.Done = true
 		}
 	}
+
+	// In ModeMultiFile, Enter confirms all selections (if any)
+	if p.Mode == ModeMultiFile {
+		if len(p.selected) > 0 {
+			p.MultiSelected = make([]string, 0, len(p.selected))
+			for path := range p.selected {
+				p.MultiSelected = append(p.MultiSelected, path)
+			}
+			p.Done = true
+		}
+	}
 	return p, nil
 }
 
@@ -262,8 +295,10 @@ var (
 	fpFileStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	fpDisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	fpCursorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	fpSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")) // green for selected
 	fpHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	fpErrStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	fpCountStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 )
 
 // View renders the picker.
@@ -279,6 +314,12 @@ func (p FilePicker) View() string {
 	}
 	sb.WriteString(fpDisabledStyle.Render(strings.Repeat("─", rulerLen)))
 	sb.WriteString("\n")
+
+	// Show selection count in multi-file mode
+	if p.Mode == ModeMultiFile && len(p.selected) > 0 {
+		sb.WriteString(fpCountStyle.Render(fmt.Sprintf("%d file(s) selected", len(p.selected))))
+		sb.WriteString("\n")
+	}
 
 	if p.Err != nil {
 		sb.WriteString(fpErrStyle.Render("Error: " + p.Err.Error()))
@@ -298,9 +339,22 @@ func (p FilePicker) View() string {
 
 	for i := p.offset; i < end; i++ {
 		e := p.entries[i]
-		prefix := "  "
+		fullPath := filepath.Join(p.dir, e.name)
+		isSelected := p.selected[fullPath]
+
+		// Build prefix: cursor indicator + selection checkbox
+		var prefix string
+		if p.Mode == ModeMultiFile && !e.isDir && e.name != ".." {
+			if isSelected {
+				prefix = "[x] "
+			} else {
+				prefix = "[ ] "
+			}
+		} else {
+			prefix = "  "
+		}
 		if i == p.cursor {
-			prefix = "> "
+			prefix = "> " + prefix[2:] // Replace leading spaces with cursor
 		}
 
 		name := e.name
@@ -309,7 +363,9 @@ func (p FilePicker) View() string {
 		}
 
 		var style lipgloss.Style
-		if i == p.cursor {
+		if isSelected {
+			style = fpSelectedStyle
+		} else if i == p.cursor {
 			style = fpCursorStyle
 		} else if e.isDir {
 			style = fpDirStyle
@@ -328,9 +384,12 @@ func (p FilePicker) View() string {
 
 	// Help footer
 	sb.WriteString("\n")
-	if p.Mode == ModeDir {
+	switch p.Mode {
+	case ModeDir:
 		sb.WriteString(fpHelpStyle.Render("enter open  space select dir  backspace parent  ~ home  esc cancel"))
-	} else {
+	case ModeMultiFile:
+		sb.WriteString(fpHelpStyle.Render("space toggle  enter confirm  backspace parent  ~ home  esc cancel"))
+	default:
 		sb.WriteString(fpHelpStyle.Render("enter open/select  backspace parent  ~ home  esc cancel"))
 	}
 

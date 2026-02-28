@@ -62,7 +62,7 @@ const (
 	sessModeRename                     // typing new name for selected session
 	sessModeDelete                     // confirm delete
 	sessModeImport                     // choose import type
-	sessModeImportPick                 // filepicker for import
+	sessModeImportPick                 // filepicker for import (files)
 )
 
 // ── Action items in the bottom menu ─────────────────────────────────────────
@@ -151,6 +151,9 @@ type SessionsModel struct {
 	pickerOpen bool
 	picker     components.FilePicker
 	importType importChoice
+
+	// Selected archive files (for multi-select)
+	selectedFiles []string
 
 	// After creating a session, we must import before opening it
 	pendingOpen    bool
@@ -432,13 +435,27 @@ func (m SessionsModel) updateImportMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.importType = choice
 			m.mode = sessModeImportPick
+			m.selectedFiles = nil // Reset selected files
+
 			var pickerMode components.PickerMode
-			if choice == importFolder {
+			switch choice {
+			case importFolder:
 				pickerMode = components.ModeDir
-			} else {
+			case importZip:
+				pickerMode = components.ModeMultiFile
+				m.picker = components.NewFilePicker(pickerMode)
+				m.picker.AllowedExts = []string{".zip"}
+			case importTGZ:
+				pickerMode = components.ModeMultiFile
+				m.picker = components.NewFilePicker(pickerMode)
+				m.picker.AllowedExts = []string{".tgz", ".tar.gz"}
+			default:
 				pickerMode = components.ModeFile
+				m.picker = components.NewFilePicker(pickerMode)
 			}
-			m.picker = components.NewFilePicker(pickerMode)
+			if choice == importFolder {
+				m.picker = components.NewFilePicker(pickerMode)
+			}
 			m.pickerOpen = true
 			return m, m.picker.Init()
 		}
@@ -454,6 +471,7 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "esc" {
 			m.mode = sessModeImport
 			m.pickerOpen = false
+			m.selectedFiles = nil
 			return m, nil
 		}
 	}
@@ -462,10 +480,9 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.picker, cmd = m.picker.Update(msg)
 
 	if m.picker.Done {
-		selected := m.picker.Selected
 		m.pickerOpen = false
 
-		// Determine target session: pending (just-created) or selected in list
+		// Determine target session
 		var sess *session.Session
 		if m.pendingOpen && m.pendingSession != nil {
 			sess = m.pendingSession
@@ -476,18 +493,40 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = sessModeList
 			return m, nil
 		}
-		importType := m.importType
-		return m, func() tea.Msg {
-			var err error
-			switch importType {
-			case importFolder:
-				err = sess.ImportFolder(selected)
-			case importZip:
-				err = sess.ImportZip(selected)
-			case importTGZ:
-				err = sess.ImportTGZ(selected)
+
+		// Handle based on import type
+		switch m.importType {
+		case importFolder:
+			// Single folder selection - import directly
+			selected := m.picker.Selected
+			return m, func() tea.Msg {
+				err := sess.ImportFolder(selected)
+				return sessImportDoneMsg{err: err}
 			}
-			return sessImportDoneMsg{err: err}
+
+		case importZip:
+			// Multi-file selection - extract to session source folder
+			selectedFiles := m.picker.MultiSelected
+			if len(selectedFiles) == 0 {
+				m.mode = sessModeImport
+				return m, nil
+			}
+			return m, func() tea.Msg {
+				err := sess.ImportZipMulti(selectedFiles, "")
+				return sessImportDoneMsg{err: err}
+			}
+
+		case importTGZ:
+			// Multi-file selection - extract to session source folder
+			selectedFiles := m.picker.MultiSelected
+			if len(selectedFiles) == 0 {
+				m.mode = sessModeImport
+				return m, nil
+			}
+			return m, func() tea.Msg {
+				err := sess.ImportTGZMulti(selectedFiles, "")
+				return sessImportDoneMsg{err: err}
+			}
 		}
 	}
 	return m, cmd
@@ -673,7 +712,26 @@ func (m SessionsModel) viewImportMenu() string {
 
 func (m SessionsModel) viewPicker() string {
 	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("Select path"))
+
+	// Show different titles based on mode
+	switch m.mode {
+	case sessModeImportPick:
+		switch m.importType {
+		case importZip:
+			sb.WriteString(titleStyle.Render("Select .zip archive(s)"))
+			sb.WriteString("\n")
+			sb.WriteString(descStyle.Render("Space to toggle, Enter to confirm"))
+		case importTGZ:
+			sb.WriteString(titleStyle.Render("Select .tgz archive(s)"))
+			sb.WriteString("\n")
+			sb.WriteString(descStyle.Render("Space to toggle, Enter to confirm"))
+		default:
+			sb.WriteString(titleStyle.Render("Select path"))
+		}
+	default:
+		sb.WriteString(titleStyle.Render("Select path"))
+	}
+
 	sb.WriteString("\n\n")
 	sb.WriteString(m.picker.View())
 	return sb.String()

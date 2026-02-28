@@ -402,6 +402,80 @@ func (s *Session) SetExternalSource(path string) error {
 	return s.Save()
 }
 
+// ImportZipMulti extracts multiple .zip archives into a custom destination directory.
+// If destDir is empty, it defaults to <session>/source.
+// The original paths are stored as comma-separated values in OriginalPath.
+func (s *Session) ImportZipMulti(zipPaths []string, destDir string) error {
+	if destDir == "" {
+		destDir = filepath.Join(s.Dir, "source")
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("session: create dest dir: %w", err)
+	}
+
+	for _, zipPath := range zipPaths {
+		if err := extractZip(zipPath, destDir); err != nil {
+			return fmt.Errorf("session: import zip %s: %w", filepath.Base(zipPath), err)
+		}
+	}
+
+	// Store all original paths
+	var originalPaths []string
+	for _, p := range zipPaths {
+		originalPaths = append(originalPaths, p)
+	}
+
+	// Determine imported path relative to session dir if possible
+	importedPath := destDir
+	if rel, err := filepath.Rel(s.Dir, destDir); err == nil && !strings.HasPrefix(rel, "..") {
+		importedPath = rel
+	}
+
+	s.Config.Source = Source{
+		Type:         SourceZip,
+		OriginalPath: strings.Join(originalPaths, ","),
+		ImportedPath: importedPath,
+	}
+	return s.Save()
+}
+
+// ImportTGZMulti extracts multiple .tgz/.tar.gz archives into a custom destination directory.
+// If destDir is empty, it defaults to <session>/source.
+// The original paths are stored as comma-separated values in OriginalPath.
+func (s *Session) ImportTGZMulti(tgzPaths []string, destDir string) error {
+	if destDir == "" {
+		destDir = filepath.Join(s.Dir, "source")
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("session: create dest dir: %w", err)
+	}
+
+	for _, tgzPath := range tgzPaths {
+		if err := extractTGZ(tgzPath, destDir); err != nil {
+			return fmt.Errorf("session: import tgz %s: %w", filepath.Base(tgzPath), err)
+		}
+	}
+
+	// Store all original paths
+	var originalPaths []string
+	for _, p := range tgzPaths {
+		originalPaths = append(originalPaths, p)
+	}
+
+	// Determine imported path relative to session dir if possible
+	importedPath := destDir
+	if rel, err := filepath.Rel(s.Dir, destDir); err == nil && !strings.HasPrefix(rel, "..") {
+		importedPath = rel
+	}
+
+	s.Config.Source = Source{
+		Type:         SourceTGZ,
+		OriginalPath: strings.Join(originalPaths, ","),
+		ImportedPath: importedPath,
+	}
+	return s.Save()
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func copyDirRecursive(src, dst string) error {
