@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // ProgressEvent is emitted by the pipeline to report progress to the TUI/CLI.
@@ -148,7 +149,16 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 5] converted=%d errors=%d", converted, len(mpErrs))
 
 	// ── Phase 6+7: EXIF ─────────────────────────────────────────────────────
-	applied, dateFallback, exifErrCount, _ := ApplyEXIFBatch(
+	// Count files with JSON matches for logging
+	withJSON := 0
+	for src := range xfer.DestMap {
+		if idx.MediaFiles[src] != "" {
+			withJSON++
+		}
+	}
+	logger.Printf("[Phase 6+7] starting: %d files to process, %d have JSON matches", len(xfer.DestMap), withJSON)
+
+	applied, dateFallback, exifErrCount, exifErrs := ApplyEXIFBatch(
 		xfer.DestMap,
 		idx.MediaFiles,
 		cfg.DryRun,
@@ -156,6 +166,14 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 			emit(6, "Applying metadata", done, total, "")
 		},
 	)
+	// Log first few EXIF errors for debugging
+	for i, e := range exifErrs {
+		if i >= 5 {
+			logger.Printf("[Phase 6+7] ... and %d more errors", len(exifErrs)-5)
+			break
+		}
+		logger.Printf("[Phase 6+7] error: %v", e)
+	}
 	stats.EXIFApplied = applied
 	stats.DateFromFilename = dateFallback
 	stats.Errors += exifErrCount
@@ -196,21 +214,48 @@ var googlePhotosVariants = []string{
 var googlePhotosLocaleRe = regexp.MustCompile(`(?i)^Google Fo(to|tos|tos|to)s?$`)
 
 func detectGooglePhotosDir(sourceDir string) (string, error) {
+	// First, check if sourceDir itself is a Google Photos folder
+	baseName := filepath.Base(sourceDir)
 	for _, variant := range googlePhotosVariants {
-		p := filepath.Join(sourceDir, variant)
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			return p, nil
-		}
-	}
-	// Also accept being pointed directly at the Google Photos folder
-	for _, variant := range googlePhotosVariants {
-		if filepath.Base(sourceDir) == variant {
+		if strings.EqualFold(baseName, variant) {
 			return sourceDir, nil
 		}
 	}
+
+	// Recursively search for Google Photos folder (up to 3 levels deep)
+	var found string
+	filepath.WalkDir(sourceDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		// Check depth - don't go too deep
+		rel, _ := filepath.Rel(sourceDir, path)
+		depth := len(strings.Split(rel, string(os.PathSeparator)))
+		if depth > 3 {
+			return filepath.SkipDir
+		}
+
+		// Check if this directory matches a Google Photos variant
+		for _, variant := range googlePhotosVariants {
+			if strings.EqualFold(d.Name(), variant) {
+				found = path
+				return filepath.SkipAll // stop walking
+			}
+		}
+		return nil
+	})
+
+	if found != "" {
+		return found, nil
+	}
+
 	_ = googlePhotosLocaleRe
 	return "", fmt.Errorf(
-		"cannot find Google Photos folder in %q — expected one of: %v",
+		"cannot find Google Photos folder in %q — searched for: %v",
 		sourceDir, googlePhotosVariants,
 	)
 }
