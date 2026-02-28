@@ -202,7 +202,7 @@ func (m ProcessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Also forward tick to log panel (mouse scroll support)
+		// Also forward tick to log panel
 		logCmd := m.log.Update(msg)
 		if logCmd != nil {
 			cmds = append(cmds, logCmd)

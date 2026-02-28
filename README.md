@@ -12,7 +12,6 @@
 - **Recover Missing** — download files that Google omitted from the export, using cookies exported from Chrome
 - **Pre-flight analysis** — before committing to a long run, get a summary: file count, match rate, albums detected, date range, estimated output size, and motion-photo count
 - **Full-screen TUI** — animated spinners, smooth progress bars, an MB/s sparkline throughput graph, a live log panel, and a filterable missing-files report table
-- **Mouse support** — click menu items and buttons directly
 - **Headless / CI mode** — `--no-tui` flag or subcommands for scripted use
 - **Self-contained** — `exiftool` and `ffmpeg` can be bundled inside the binary at build time (no runtime dependencies)
 

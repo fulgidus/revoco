@@ -22,8 +22,8 @@ type LogLine struct {
 	IsError bool
 }
 
-// LogPanel is a scrollable log view backed by bubbles/viewport with mouse
-// wheel support and auto-follow when at the bottom.
+// LogPanel is a scrollable log view backed by bubbles/viewport with
+// auto-follow when at the bottom.
 type LogPanel struct {
 	Width    int
 	Height   int
@@ -67,7 +67,7 @@ func (l *LogPanel) Resize(width, height int) {
 	l.vp.SetContent(l.buildContent())
 }
 
-// Update handles mouse scroll and keyboard events for the viewport.
+// Update handles keyboard events for the viewport.
 func (l *LogPanel) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	l.vp, cmd = l.vp.Update(msg)
