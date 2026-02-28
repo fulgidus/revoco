@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -36,7 +37,14 @@ type PipelineResult struct {
 
 // Run executes the full 8-phase pipeline, emitting progress events on the provided channel.
 // The channel is closed when the run completes.
+// This is a convenience wrapper around RunWithContext using context.Background().
 func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, error) {
+	return RunWithContext(context.Background(), cfg, events)
+}
+
+// RunWithContext executes the full 8-phase pipeline with cancellation support.
+// The channel is closed when the run completes or is cancelled.
+func RunWithContext(ctx context.Context, cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, error) {
 	defer close(events)
 
 	emit := func(phase int, label string, done, total int, msg string) {
@@ -46,6 +54,16 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 			Done:    done,
 			Total:   total,
 			Message: msg,
+		}
+	}
+
+	// checkCancel returns an error if the context is cancelled
+	checkCancel := func(phase string) error {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("cancelled during %s: %w", phase, ctx.Err())
+		default:
+			return nil
 		}
 	}
 
@@ -80,8 +98,11 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	stats := Stats{}
 
 	// ── Phase 1: Index ──────────────────────────────────────────────────────
+	if err := checkCancel("setup"); err != nil {
+		return nil, err
+	}
 	emit(1, "Indexing files", 0, 0, "Scanning...")
-	idx, err := IndexFiles(gfotoPath, func(done, total int) {
+	idx, err := IndexFiles(ctx, gfotoPath, func(done, total int) {
 		emit(1, "Matching metadata", done, total, "")
 	})
 	if err != nil {
@@ -95,6 +116,9 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 1] media=%d matched=%d orphans=%d", idx.TotalMedia, idx.TotalMatched, idx.TotalOrphans)
 
 	// ── Phase 2: Albums ─────────────────────────────────────────────────────
+	if err := checkCancel("indexing"); err != nil {
+		return nil, err
+	}
 	emit(2, "Resolving albums", 0, 1, "")
 	albums, err := AssignAlbums(gfotoPath, idx.MediaFiles)
 	if err != nil {
@@ -106,6 +130,9 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 2] albums=%d", stats.Albums)
 
 	// ── Phase 3: Dedup ──────────────────────────────────────────────────────
+	if err := checkCancel("albums"); err != nil {
+		return nil, err
+	}
 	dedup, err := DeduplicateFiles(idx.MediaFiles, albums.MediaAlbum, func(done, total int) {
 		emit(3, "Deduplicating", done, total, "")
 	})
@@ -118,12 +145,17 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 3] unique=%d duplicates=%d", len(dedup.Unique), dedup.Duplicates)
 
 	// ── Phase 4: Transfer ───────────────────────────────────────────────────
+	if err := checkCancel("dedup"); err != nil {
+		return nil, err
+	}
 	xfer, err := TransferFiles(
+		ctx,
 		dedup.Unique,
 		albums.MediaAlbum,
 		idx.MediaFiles,
 		dedup.MediaHash,
 		TransferConfig{DestDir: cfg.DestDir, UseMove: cfg.UseMove, DryRun: cfg.DryRun},
+		logger,
 		func(done, total int) {
 			emit(4, "Transferring files", done, total, "")
 		},
@@ -139,7 +171,10 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 4] transferred=%d conflicts=%d errors=%d", xfer.FilesTransferred, xfer.ConflictsResolved, xfer.Errors)
 
 	// ── Phase 5: Motion Photos ──────────────────────────────────────────────
-	converted, mpErrs := ConvertMotionPhotos(xfer.DestMap, cfg.DryRun, func(done, total int) {
+	if err := checkCancel("transfer"); err != nil {
+		return nil, err
+	}
+	converted, mpErrs := ConvertMotionPhotos(xfer.DestMap, cfg.DryRun, logger, func(done, total int) {
 		emit(5, "Converting motion photos", done, total, "")
 	})
 	stats.MPConverted = converted
@@ -149,6 +184,9 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	logger.Printf("[Phase 5] converted=%d errors=%d", converted, len(mpErrs))
 
 	// ── Phase 6+7: EXIF ─────────────────────────────────────────────────────
+	if err := checkCancel("motion photos"); err != nil {
+		return nil, err
+	}
 	// Count files with JSON matches for logging
 	withJSON := 0
 	for src := range xfer.DestMap {
@@ -158,14 +196,20 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	}
 	logger.Printf("[Phase 6+7] starting: %d files to process, %d have JSON matches", len(xfer.DestMap), withJSON)
 
-	applied, dateFallback, exifErrCount, exifErrs := ApplyEXIFBatch(
+	applied, dateFallback, exifSkipped, exifErrCount, exifErrs, exifFatalErr := ApplyEXIFBatch(
+		ctx,
 		xfer.DestMap,
 		idx.MediaFiles,
 		cfg.DryRun,
+		logger,
 		func(done, total int) {
 			emit(6, "Applying metadata", done, total, "")
 		},
 	)
+	// Check for fatal error (e.g., exiftool not available)
+	if exifFatalErr != nil {
+		return nil, fmt.Errorf("phase 6+7: %w", exifFatalErr)
+	}
 	// Log first few EXIF errors for debugging
 	for i, e := range exifErrs {
 		if i >= 5 {
@@ -178,10 +222,13 @@ func Run(cfg PipelineConfig, events chan<- ProgressEvent) (*PipelineResult, erro
 	stats.DateFromFilename = dateFallback
 	stats.Errors += exifErrCount
 	emit(6, "Metadata done", applied+dateFallback, len(xfer.DestMap),
-		fmt.Sprintf("%d from JSON, %d from filename, %d errors", applied, dateFallback, exifErrCount))
-	logger.Printf("[Phase 6+7] json=%d filename=%d errors=%d", applied, dateFallback, exifErrCount)
+		fmt.Sprintf("%d from JSON, %d from filename, %d skipped, %d errors", applied, dateFallback, exifSkipped, exifErrCount))
+	logger.Printf("[Phase 6+7] json=%d filename=%d skipped=%d errors=%d", applied, dateFallback, exifSkipped, exifErrCount)
 
 	// ── Phase 8: Report ─────────────────────────────────────────────────────
+	if err := checkCancel("EXIF"); err != nil {
+		return nil, err
+	}
 	emit(7, "Generating report", 0, 1, "")
 	reportDir := cfg.DestDir
 	if cfg.SessionDir != "" {

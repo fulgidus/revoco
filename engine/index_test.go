@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,7 @@ func TestIndexFiles_JSONMatching(t *testing.T) {
 	}`)
 
 	// Run indexing
-	result, err := IndexFiles(gfotoDir, nil)
+	result, err := IndexFiles(context.Background(), gfotoDir, nil)
 	if err != nil {
 		t.Fatalf("IndexFiles failed: %v", err)
 	}

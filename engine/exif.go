@@ -2,8 +2,10 @@ package engine
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -22,10 +24,12 @@ type ExifTool struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	logger *log.Logger
 }
 
 // NewExifTool starts a persistent exiftool process.
-func NewExifTool() (*ExifTool, error) {
+// The logger is used to capture stderr output from exiftool.
+func NewExifTool(logger *log.Logger) (*ExifTool, error) {
 	exiftoolBin, err := tools.FindTool("exiftool")
 	if err != nil {
 		return nil, fmt.Errorf("exiftool not available: %w", err)
@@ -39,14 +43,30 @@ func NewExifTool() (*ExifTool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("exiftool stdout: %w", err)
 	}
-	cmd.Stderr = os.Stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("exiftool stderr: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start exiftool: %w", err)
 	}
+
+	// Goroutine to capture stderr and route to logger
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			if logger != nil {
+				logger.Printf("[EXIF] exiftool stderr: %s", scanner.Text())
+			}
+		}
+	}()
+
 	return &ExifTool{
 		cmd:    cmd,
 		stdin:  stdin,
 		stdout: bufio.NewScanner(stdout),
+		logger: logger,
 	}, nil
 }
 
@@ -207,28 +227,17 @@ func isVideoExt(ext string) bool {
 
 // ApplyEXIFBatch applies metadata to a batch of files using the persistent exiftool process.
 // For files with JSON: uses JSON metadata. For files without JSON: falls back to filename date.
+// The context allows cancellation during the batch processing loop.
+// Returns an error if exiftool is not available (fatal error).
 func ApplyEXIFBatch(
+	ctx context.Context,
 	destMap map[string]string, // src -> dest
 	mediaJSON map[string]string, // src -> json path
 	dryRun bool,
+	logger *log.Logger,
 	progress func(done, total int),
-) (applied, dateFallback, errCount int, errs []error) {
-	if dryRun {
-		for range destMap {
-			applied++
-		}
-		return
-	}
-
-	et, err := NewExifTool()
-	if err != nil {
-		// exiftool not available — skip silently
-		return 0, 0, len(destMap), []error{fmt.Errorf("exiftool not available: %w", err)}
-	}
-	defer et.Close()
-
+) (applied, dateFallback, skipped, errCount int, errs []error, fatalErr error) {
 	total := len(destMap)
-	done := 0
 
 	// Build src list for deterministic ordering
 	srcs := make([]string, 0, total)
@@ -236,27 +245,93 @@ func ApplyEXIFBatch(
 		srcs = append(srcs, src)
 	}
 
+	if dryRun {
+		logger.Printf("[EXIF] DRY-RUN mode - simulating metadata application")
+		for i, src := range srcs {
+			// Check for cancellation
+			select {
+			case <-ctx.Done():
+				logger.Printf("[EXIF] Cancelled during dry-run after %d/%d files", i, total)
+				fatalErr = ctx.Err()
+				return
+			default:
+			}
+
+			dest := destMap[src]
+			jsonPath := mediaJSON[src]
+			if jsonPath != "" {
+				logger.Printf("[EXIF] [DRY-RUN] Would apply JSON metadata: %s -> %s", filepath.Base(jsonPath), filepath.Base(dest))
+				applied++
+			} else {
+				base := filepath.Base(dest)
+				t, _ := filedate.Extract(base)
+				if !t.IsZero() {
+					logger.Printf("[EXIF] [DRY-RUN] Would apply filename date (%s): %s", t.Format("2006-01-02"), base)
+					dateFallback++
+				} else {
+					logger.Printf("[EXIF] [DRY-RUN] No metadata source for: %s", base)
+					skipped++
+				}
+			}
+			if progress != nil {
+				progress(i+1, total)
+			}
+		}
+		return
+	}
+
+	// Initialize exiftool - this is now a fatal error
+	et, err := NewExifTool(logger)
+	if err != nil {
+		fatalErr = fmt.Errorf("exiftool not available: %w", err)
+		logger.Printf("[EXIF] FATAL: %v", fatalErr)
+		return
+	}
+	defer et.Close()
+	logger.Printf("[EXIF] Started exiftool process")
+
+	done := 0
 	for _, src := range srcs {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			logger.Printf("[EXIF] Cancelled after %d/%d files", done, total)
+			fatalErr = ctx.Err()
+			return
+		default:
+		}
+
 		dest := destMap[src]
 		jsonPath := mediaJSON[src]
+		baseName := filepath.Base(dest)
 
 		var applyErr error
 		if jsonPath != "" {
 			applyErr = et.ApplyEXIFFromJSON(dest, jsonPath)
 			if applyErr == nil {
 				applied++
+				logger.Printf("[EXIF] Applied JSON metadata: %s <- %s", baseName, filepath.Base(jsonPath))
+			} else {
+				errCount++
+				errs = append(errs, applyErr)
+				logger.Printf("[EXIF] ERROR applying JSON to %s: %v", baseName, applyErr)
 			}
 		} else {
 			ok, applyErr2 := et.ApplyDateFromFilename(dest)
-			if applyErr2 == nil && ok {
-				dateFallback++
+			if applyErr2 == nil {
+				if ok {
+					dateFallback++
+					t, _ := filedate.Extract(baseName)
+					logger.Printf("[EXIF] Applied filename date (%s): %s", t.Format("2006-01-02"), baseName)
+				} else {
+					skipped++
+					logger.Printf("[EXIF] No metadata source (no JSON, no date in filename): %s", baseName)
+				}
+			} else {
+				errCount++
+				errs = append(errs, applyErr2)
+				logger.Printf("[EXIF] ERROR applying filename date to %s: %v", baseName, applyErr2)
 			}
-			applyErr = applyErr2
-		}
-
-		if applyErr != nil {
-			errCount++
-			errs = append(errs, applyErr)
 		}
 
 		done++
@@ -265,5 +340,6 @@ func ApplyEXIFBatch(
 		}
 	}
 
+	logger.Printf("[EXIF] Complete: applied=%d, filename-fallback=%d, skipped=%d, errors=%d", applied, dateFallback, skipped, errCount)
 	return
 }

@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -72,7 +73,8 @@ type OrphanJSON struct {
 
 // IndexFiles walks the Google Photos subdirectory, classifies all files, and
 // matches JSON metadata to their corresponding media files.
-func IndexFiles(gfotoPath string, progress func(done, total int)) (*IndexResult, error) {
+// The context allows cancellation during the matching phase.
+func IndexFiles(ctx context.Context, gfotoPath string, progress func(done, total int)) (*IndexResult, error) {
 	// Step 1: Collect all files, classify into media and JSON lists
 	var mediaFiles []string
 	var jsonFiles []string
@@ -80,6 +82,12 @@ func IndexFiles(gfotoPath string, progress func(done, total int)) (*IndexResult,
 	err := filepath.WalkDir(gfotoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
+		}
+		// Check for cancellation periodically during walk
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 		if d.IsDir() {
 			return nil
@@ -120,6 +128,13 @@ func IndexFiles(gfotoPath string, progress func(done, total int)) (*IndexResult,
 	total := len(jsonFiles)
 	// Step 3: Match each JSON to its media file
 	for i, jsonPath := range jsonFiles {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		if progress != nil {
 			progress(i, total)
 		}

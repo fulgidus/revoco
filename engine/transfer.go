@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,20 +24,36 @@ type TransferResult struct {
 	FilesTransferred  int
 	ConflictsResolved int
 	Errors            int
+	ErrorList         []error
 }
 
 // TransferFiles copies (or moves) deduplicated media files to the destination,
 // preserving album subdirectory structure and resolving name conflicts.
+// The context allows cancellation during the transfer loop.
 func TransferFiles(
+	ctx context.Context,
 	unique []string,
 	mediaAlbum map[string]string,
 	mediaJSON map[string]string,
 	mediaHash map[string]string,
 	cfg TransferConfig,
+	logger *log.Logger,
 	progress func(done, total int),
 ) (*TransferResult, error) {
-	if err := os.MkdirAll(cfg.DestDir, 0o755); err != nil {
-		return nil, err
+	if !cfg.DryRun {
+		if err := os.MkdirAll(cfg.DestDir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+
+	opType := "COPY"
+	if cfg.UseMove {
+		opType = "MOVE"
+	}
+	if cfg.DryRun {
+		logger.Printf("[Transfer] DRY-RUN mode - simulating %s operations", opType)
+	} else {
+		logger.Printf("[Transfer] Starting %s to %s", opType, cfg.DestDir)
 	}
 
 	result := &TransferResult{
@@ -47,6 +65,14 @@ func TransferFiles(
 	usedDest := make(map[string]bool, total)
 
 	for i, src := range unique {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			logger.Printf("[Transfer] Cancelled after %d/%d files", i, total)
+			return result, ctx.Err()
+		default:
+		}
+
 		if progress != nil {
 			progress(i, total)
 		}
@@ -63,6 +89,7 @@ func TransferFiles(
 		}
 
 		dest := filepath.Join(destDir, base)
+		wasConflict := false
 
 		// Conflict resolution: append 6-char hash prefix to filename
 		if usedDest[dest] {
@@ -72,19 +99,31 @@ func TransferFiles(
 			}
 			ext := filepath.Ext(base)
 			stem := strings.TrimSuffix(base, ext)
-			dest = filepath.Join(destDir, fmt.Sprintf("%s_%s%s", stem, hash, ext))
+			newName := fmt.Sprintf("%s_%s%s", stem, hash, ext)
+			dest = filepath.Join(destDir, newName)
 			result.ConflictsResolved++
+			wasConflict = true
+			logger.Printf("[Transfer] CONFLICT resolved: %s -> %s (added hash suffix)", base, newName)
 		}
 		usedDest[dest] = true
 		result.DestMap[src] = dest
 
 		if cfg.DryRun {
+			if wasConflict {
+				// Already logged above
+			} else if album != "" {
+				logger.Printf("[Transfer] [DRY-RUN] Would %s: %s -> %s/%s", opType, base, album, base)
+			} else {
+				logger.Printf("[Transfer] [DRY-RUN] Would %s: %s", opType, base)
+			}
 			result.FilesTransferred++
 			continue
 		}
 
 		if err := os.MkdirAll(destDir, 0o755); err != nil {
 			result.Errors++
+			result.ErrorList = append(result.ErrorList, fmt.Errorf("mkdir %s: %w", destDir, err))
+			logger.Printf("[Transfer] ERROR creating dir %s: %v", destDir, err)
 			continue
 		}
 
@@ -96,14 +135,22 @@ func TransferFiles(
 				err = copyFile(src, dest)
 				if err == nil {
 					os.Remove(src)
+					logger.Printf("[Transfer] MOVED (cross-device): %s -> %s", base, dest)
 				}
+			} else {
+				logger.Printf("[Transfer] MOVED: %s -> %s", base, dest)
 			}
 		} else {
 			err = copyFile(src, dest)
+			if err == nil {
+				logger.Printf("[Transfer] COPIED: %s -> %s", base, dest)
+			}
 		}
 
 		if err != nil {
 			result.Errors++
+			result.ErrorList = append(result.ErrorList, fmt.Errorf("%s %s: %w", opType, base, err))
+			logger.Printf("[Transfer] ERROR %s %s: %v", opType, base, err)
 			continue
 		}
 		result.FilesTransferred++
@@ -118,7 +165,9 @@ func TransferFiles(
 				metaDir = filepath.Join(cfg.DestDir, ".metadata")
 			}
 			if err := os.MkdirAll(metaDir, 0o755); err == nil {
-				copyFile(jsonPath, filepath.Join(metaDir, metaBase)) //nolint:errcheck
+				if err := copyFile(jsonPath, filepath.Join(metaDir, metaBase)); err != nil {
+					logger.Printf("[Transfer] WARNING: failed to copy JSON metadata %s: %v", metaBase, err)
+				}
 			}
 		}
 	}
@@ -127,6 +176,7 @@ func TransferFiles(
 		progress(total, total)
 	}
 
+	logger.Printf("[Transfer] Complete: transferred=%d, conflicts=%d, errors=%d", result.FilesTransferred, result.ConflictsResolved, result.Errors)
 	return result, nil
 }
 
