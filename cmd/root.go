@@ -11,6 +11,9 @@ import (
 	"github.com/fulgidus/revoco/engine"
 	"github.com/fulgidus/revoco/secrets"
 	"github.com/fulgidus/revoco/session"
+
+	// Import services to trigger registration
+	_ "github.com/fulgidus/revoco/services"
 )
 
 var (

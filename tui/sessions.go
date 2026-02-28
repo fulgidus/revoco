@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fulgidus/revoco/session"
-	"github.com/fulgidus/revoco/tui/components"
 )
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -58,12 +57,10 @@ var (
 type sessMode int
 
 const (
-	sessModeList       sessMode = iota // browsing session list
-	sessModeCreate                     // typing new session name
-	sessModeRename                     // typing new name for selected session
-	sessModeDelete                     // confirm delete
-	sessModeImport                     // choose import type
-	sessModeImportPick                 // filepicker for import (files)
+	sessModeList   sessMode = iota // browsing session list
+	sessModeCreate                 // typing new session name
+	sessModeRename                 // typing new name for selected session
+	sessModeDelete                 // confirm delete
 )
 
 // ── Action items in the bottom menu ─────────────────────────────────────────
@@ -74,7 +71,6 @@ const (
 	sessActionOpen sessAction = iota
 	sessActionCreate
 	sessActionRename
-	sessActionImport
 	sessActionDelete
 	sessActionQuit
 )
@@ -87,30 +83,8 @@ var sessActions = []struct {
 	{sessActionOpen, "Open", "enter"},
 	{sessActionCreate, "New", "n"},
 	{sessActionRename, "Rename", "r"},
-	{sessActionImport, "Import", "i"},
 	{sessActionDelete, "Delete", "d"},
 	{sessActionQuit, "Quit", "q"},
-}
-
-// ── Import choices ──────────────────────────────────────────────────────────
-
-type importChoice int
-
-const (
-	importFolder importChoice = iota
-	importZip
-	importTGZ
-	importCancel
-)
-
-var importChoices = []struct {
-	choice importChoice
-	label  string
-}{
-	{importFolder, "Import from folder"},
-	{importZip, "Import from .zip"},
-	{importTGZ, "Import from .tgz / .tar.gz"},
-	{importCancel, "Cancel"},
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -129,8 +103,6 @@ type sessRenamedMsg struct{ err error }
 
 type sessDeletedMsg struct{ err error }
 
-type sessImportDoneMsg struct{ err error }
-
 // ── Model ────────────────────────────────────────────────────────────────────
 
 // SessionsModel is the TUI screen for managing sessions.
@@ -144,21 +116,6 @@ type SessionsModel struct {
 
 	// Text input for create / rename
 	input textinput.Model
-
-	// Import sub-mode
-	importCursor int
-
-	// Filepicker for import
-	pickerOpen bool
-	picker     components.FilePicker
-	importType importChoice
-
-	// Selected archive files (for multi-select)
-	selectedFiles []string
-
-	// After creating a session, we must import before opening it
-	pendingOpen    bool
-	pendingSession *session.Session
 
 	// Loading state
 	loading        bool
@@ -228,13 +185,18 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = sessModeList
 			return m, loadSessions
 		}
-		// After creation, require import before opening
-		m.pendingOpen = true
-		m.pendingSession = msg.session
-		m.mode = sessModeImport
-		m.importCursor = 0
-		// Refresh list so new session appears
-		return m, loadSessions
+		// V2 sessions go directly to Dashboard - connectors are added there
+		sess := msg.session
+		m.mode = sessModeList
+		return m, tea.Batch(
+			loadSessions,
+			func() tea.Msg {
+				return SwitchScreenMsg{
+					To:      ScreenDashboard,
+					Session: sess,
+				}
+			},
+		)
 
 	case sessRenamedMsg:
 		m.loading = false
@@ -254,28 +216,6 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = sessModeList
 		m.cursor = 0
 		return m, loadSessions
-
-	case sessImportDoneMsg:
-		m.loading = false
-		m.loadingMessage = ""
-		m.pickerOpen = false
-		if msg.err != nil {
-			m.err = msg.err
-			m.mode = sessModeList
-			m.pendingOpen = false
-			m.pendingSession = nil
-			return m, loadSessions
-		}
-		// If we just created a session and import succeeded, open it
-		if m.pendingOpen && m.pendingSession != nil {
-			sess := m.pendingSession
-			m.pendingOpen = false
-			m.pendingSession = nil
-			m.mode = sessModeList
-			return m, m.openSession(sess)
-		}
-		m.mode = sessModeList
-		return m, loadSessions
 	}
 
 	// If loading, only handle spinner updates
@@ -293,10 +233,6 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateRename(msg)
 	case sessModeDelete:
 		return m.updateDelete(msg)
-	case sessModeImport:
-		return m.updateImportMenu(msg)
-	case sessModeImportPick:
-		return m.updateImportPick(msg)
 	}
 	return m, nil
 }
@@ -332,12 +268,6 @@ func (m SessionsModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Focus()
 			}
 			return m, nil
-		case "i":
-			if len(m.sessions) > 0 {
-				m.mode = sessModeImport
-				m.importCursor = 0
-			}
-			return m, nil
 		case "d":
 			if len(m.sessions) > 0 {
 				m.mode = sessModeDelete
@@ -354,8 +284,9 @@ func (m SessionsModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m SessionsModel) openSession(s *session.Session) tea.Cmd {
 	sess := s
 	return func() tea.Msg {
+		// All sessions now go to the Dashboard (connector-based view)
 		return SwitchScreenMsg{
-			To:      ScreenWelcome,
+			To:      ScreenDashboard,
 			Session: sess,
 		}
 	}
@@ -377,7 +308,7 @@ func (m SessionsModel) updateCreate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, func() tea.Msg {
-				s, err := session.Create(name)
+				s, err := session.CreateV2(name)
 				return sessCreatedMsg{session: s, err: err}
 			}
 		}
@@ -439,157 +370,12 @@ func (m SessionsModel) updateDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ── Import menu ──────────────────────────────────────────────────────────────
-
-func (m SessionsModel) updateImportMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.importCursor > 0 {
-				m.importCursor--
-			}
-		case "down", "j":
-			if m.importCursor < len(importChoices)-1 {
-				m.importCursor++
-			}
-		case "esc":
-			m.mode = sessModeList
-			m.pendingOpen = false
-			m.pendingSession = nil
-			return m, nil
-		case "enter":
-			choice := importChoices[m.importCursor].choice
-			if choice == importCancel {
-				m.mode = sessModeList
-				m.pendingOpen = false
-				m.pendingSession = nil
-				return m, nil
-			}
-			m.importType = choice
-			m.mode = sessModeImportPick
-			m.selectedFiles = nil // Reset selected files
-
-			var pickerMode components.PickerMode
-			switch choice {
-			case importFolder:
-				pickerMode = components.ModeDir
-			case importZip:
-				pickerMode = components.ModeMultiFile
-				m.picker = components.NewFilePicker(pickerMode)
-				m.picker.AllowedExts = []string{".zip"}
-			case importTGZ:
-				pickerMode = components.ModeMultiFile
-				m.picker = components.NewFilePicker(pickerMode)
-				m.picker.AllowedExts = []string{".tgz", ".tar.gz"}
-			default:
-				pickerMode = components.ModeFile
-				m.picker = components.NewFilePicker(pickerMode)
-			}
-			if choice == importFolder {
-				m.picker = components.NewFilePicker(pickerMode)
-			}
-			m.pickerOpen = true
-			return m, m.picker.Init()
-		}
-	}
-	return m, nil
-}
-
-// ── Import filepicker ────────────────────────────────────────────────────────
-
-func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.String() == "esc" {
-			m.mode = sessModeImport
-			m.pickerOpen = false
-			m.selectedFiles = nil
-			return m, nil
-		}
-	}
-
-	var cmd tea.Cmd
-	m.picker, cmd = m.picker.Update(msg)
-
-	if m.picker.Done {
-		m.pickerOpen = false
-
-		// Determine target session
-		var sess *session.Session
-		if m.pendingOpen && m.pendingSession != nil {
-			sess = m.pendingSession
-		} else if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
-			sess = m.sessions[m.cursor]
-		}
-		if sess == nil {
-			m.mode = sessModeList
-			return m, nil
-		}
-
-		// Handle based on import type
-		switch m.importType {
-		case importFolder:
-			// Single folder selection - import directly
-			selected := m.picker.Selected
-			m.loading = true
-			m.loadingMessage = "Importing folder..."
-			return m, tea.Batch(
-				m.spinner.Tick,
-				func() tea.Msg {
-					err := sess.ImportFolder(selected)
-					return sessImportDoneMsg{err: err}
-				},
-			)
-
-		case importZip:
-			// Multi-file selection - extract to session source folder
-			selectedFiles := m.picker.MultiSelected
-			if len(selectedFiles) == 0 {
-				m.mode = sessModeImport
-				return m, nil
-			}
-			m.loading = true
-			m.loadingMessage = fmt.Sprintf("Extracting %d zip file(s)...", len(selectedFiles))
-			return m, tea.Batch(
-				m.spinner.Tick,
-				func() tea.Msg {
-					err := sess.ImportZipMulti(selectedFiles, "")
-					return sessImportDoneMsg{err: err}
-				},
-			)
-
-		case importTGZ:
-			// Multi-file selection - extract to session source folder
-			selectedFiles := m.picker.MultiSelected
-			if len(selectedFiles) == 0 {
-				m.mode = sessModeImport
-				return m, nil
-			}
-			m.loading = true
-			m.loadingMessage = fmt.Sprintf("Extracting %d archive(s)...", len(selectedFiles))
-			return m, tea.Batch(
-				m.spinner.Tick,
-				func() tea.Msg {
-					err := sess.ImportTGZMulti(selectedFiles, "")
-					return sessImportDoneMsg{err: err}
-				},
-			)
-		}
-	}
-	return m, cmd
-}
-
 // ── View ─────────────────────────────────────────────────────────────────────
 
 func (m SessionsModel) View() string {
 	// Show loading spinner for any long operation
 	if m.loading {
 		return m.viewLoading()
-	}
-
-	if m.pickerOpen {
-		return m.viewPicker()
 	}
 
 	switch m.mode {
@@ -599,8 +385,6 @@ func (m SessionsModel) View() string {
 		return m.viewRename()
 	case sessModeDelete:
 		return m.viewDelete()
-	case sessModeImport:
-		return m.viewImportMenu()
 	}
 
 	return m.viewList()
@@ -689,9 +473,9 @@ func (m SessionsModel) viewList() string {
 func (m SessionsModel) viewActionBar() string {
 	var parts []string
 	for _, a := range sessActions {
-		// Only show "Open/Rename/Import/Delete" if sessions exist
+		// Only show "Open/Rename/Delete" if sessions exist
 		switch a.action {
-		case sessActionOpen, sessActionRename, sessActionImport, sessActionDelete:
+		case sessActionOpen, sessActionRename, sessActionDelete:
 			if len(m.sessions) == 0 {
 				continue
 			}
@@ -749,59 +533,6 @@ func (m SessionsModel) viewDelete() string {
 	sb.WriteString(sessionDangerStyle.Render("y") + helpStyle.Render(" confirm  ") +
 		sessionActionStyle.Render("n/esc") + helpStyle.Render(" cancel"))
 	return sessionBoxStyle.Width(m.width - 8).Render(sb.String())
-}
-
-func (m SessionsModel) viewImportMenu() string {
-	var sb strings.Builder
-	name := ""
-	if m.cursor < len(m.sessions) {
-		name = m.sessions[m.cursor].Config.Name
-	}
-	sb.WriteString(sessionTitleStyle.Render("Import Takeout"))
-	sb.WriteString("\n")
-	sb.WriteString(descStyle.Render("Into session: " + name))
-	sb.WriteString("\n\n")
-
-	for i, c := range importChoices {
-		prefix := "  "
-		style := sessionItemStyle
-		if i == m.importCursor {
-			prefix = "> "
-			style = sessionSelectedStyle
-		}
-		sb.WriteString(style.Render(prefix + c.label))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n")
-	sb.WriteString(helpStyle.Render("up/down navigate  enter select  esc cancel"))
-	return sessionBoxStyle.Width(m.width - 8).Render(sb.String())
-}
-
-func (m SessionsModel) viewPicker() string {
-	var sb strings.Builder
-
-	// Show different titles based on mode
-	switch m.mode {
-	case sessModeImportPick:
-		switch m.importType {
-		case importZip:
-			sb.WriteString(titleStyle.Render("Select .zip archive(s)"))
-			sb.WriteString("\n")
-			sb.WriteString(descStyle.Render("Space to toggle, Enter to confirm"))
-		case importTGZ:
-			sb.WriteString(titleStyle.Render("Select .tgz archive(s)"))
-			sb.WriteString("\n")
-			sb.WriteString(descStyle.Render("Space to toggle, Enter to confirm"))
-		default:
-			sb.WriteString(titleStyle.Render("Select path"))
-		}
-	default:
-		sb.WriteString(titleStyle.Render("Select path"))
-	}
-
-	sb.WriteString("\n\n")
-	sb.WriteString(m.picker.View())
-	return sb.String()
 }
 
 // formatDuration formats a duration for display.

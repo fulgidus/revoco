@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fulgidus/revoco/engine"
+	"github.com/fulgidus/revoco/session"
 	"github.com/fulgidus/revoco/tui/components"
 )
 
@@ -50,6 +52,7 @@ var phaseLabels = []string{
 //	right panel (~60%) shows the live log,
 //	bottom bar shows stats.
 type ProcessModel struct {
+	session   *session.Session
 	cfg       engine.PipelineConfig
 	eventsCh  chan engine.ProgressEvent
 	phases    [8]components.PhaseBar
@@ -58,6 +61,8 @@ type ProcessModel struct {
 	result    *engine.PipelineResult
 	err       error
 	done      bool
+	running   bool
+	cancelled bool
 	width     int
 	height    int
 	startTime time.Time
@@ -65,6 +70,9 @@ type ProcessModel struct {
 	// throughput tracking: items processed per tick
 	lastItems int
 	lastTick  time.Time
+
+	// Cancellation - using pointer so it persists across value copies
+	cancelFunc *context.CancelFunc
 }
 
 // NewProcessModel builds a ProcessModel ready to run.
@@ -79,15 +87,69 @@ func NewProcessModel(source, dest, sessionDir string, width, height int) Process
 
 	leftW, rightW, logH := dashboardDims(width, height)
 
+	// Pre-allocate cancel func pointer for sharing across value copies
+	var cancelFunc context.CancelFunc
+
 	m := ProcessModel{
-		cfg:       cfg,
-		eventsCh:  ch,
-		width:     width,
-		height:    height,
-		log:       components.NewLogPanel(rightW-4, logH, 500),
-		sparkline: components.NewSparkline(leftW-4, "items/s"),
-		startTime: time.Now(),
-		lastTick:  time.Now(),
+		cfg:        cfg,
+		eventsCh:   ch,
+		width:      width,
+		height:     height,
+		log:        components.NewLogPanel(rightW-4, logH, 500),
+		sparkline:  components.NewSparkline(leftW-4, "items/s"),
+		startTime:  time.Now(),
+		lastTick:   time.Now(),
+		cancelFunc: &cancelFunc,
+	}
+	for i, label := range phaseLabels {
+		m.phases[i] = components.PhaseBar{
+			Label: label,
+			Width: leftW - 4,
+		}
+	}
+	return m
+}
+
+// NewProcessModelFromSession creates a ProcessModel from a session.
+// This extracts source/dest paths from the session configuration.
+func NewProcessModelFromSession(sess *session.Session) ProcessModel {
+	// Get source path from session (which may come from input connectors in v2)
+	source := sess.SourcePath()
+	dest := sess.OutputPath()
+	sessionDir := sess.Dir
+
+	// Use DataDir as source if no source path set but data has been retrieved
+	if source == "" {
+		source = sess.DataDir()
+	}
+
+	cfg := engine.PipelineConfig{
+		SourceDir:  source,
+		DestDir:    dest,
+		SessionDir: sessionDir,
+		UseMove:    sess.Config.UseMove,
+		DryRun:     sess.Config.DryRun,
+	}
+	ch := make(chan engine.ProgressEvent, 64)
+
+	// Use default dimensions - will be resized on WindowSizeMsg
+	width, height := 80, 24
+	leftW, rightW, logH := dashboardDims(width, height)
+
+	// Pre-allocate cancel func pointer for sharing across value copies
+	var cancelFunc context.CancelFunc
+
+	m := ProcessModel{
+		session:    sess,
+		cfg:        cfg,
+		eventsCh:   ch,
+		width:      width,
+		height:     height,
+		log:        components.NewLogPanel(rightW-4, logH, 500),
+		sparkline:  components.NewSparkline(leftW-4, "items/s"),
+		startTime:  time.Now(),
+		lastTick:   time.Now(),
+		cancelFunc: &cancelFunc,
 	}
 	for i, label := range phaseLabels {
 		m.phases[i] = components.PhaseBar{
@@ -117,9 +179,6 @@ func dashboardDims(width, height int) (leftW, rightW, logH int) {
 
 // Init implements tea.Model — starts the pipeline and a tick.
 func (m ProcessModel) Init() tea.Cmd {
-	cfg := m.cfg
-	ch := m.eventsCh
-
 	// Also init spinner for each phase bar
 	var spinCmds []tea.Cmd
 	for i := range m.phases {
@@ -129,14 +188,29 @@ func (m ProcessModel) Init() tea.Cmd {
 		}
 	}
 
-	cmds := append(spinCmds,
+	return tea.Batch(spinCmds...)
+}
+
+// startProcessing starts the actual pipeline execution.
+func (m ProcessModel) startProcessing() tea.Cmd {
+	cfg := m.cfg
+	ch := m.eventsCh
+	cancelFuncPtr := m.cancelFunc
+
+	// Create cancellable context and store cancel func via pointer
+	ctx, cancel := context.WithCancel(context.Background())
+	if cancelFuncPtr != nil {
+		*cancelFuncPtr = cancel
+	}
+
+	return tea.Batch(
 		func() tea.Msg {
-			result, err := engine.Run(cfg, ch)
+			defer cancel()
+			result, err := engine.RunWithContext(ctx, cfg, ch)
 			return processDoneMsg{result: result, err: err}
 		},
 		tickProcess(),
 	)
-	return tea.Batch(cmds...)
 }
 
 func tickProcess() tea.Cmd {
@@ -215,10 +289,16 @@ func (m ProcessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case processDoneMsg:
 		m.done = true
+		m.running = false
 		m.result = msg.result
 		m.err = msg.err
 		if msg.err != nil {
-			m.log.Append("ERROR: "+msg.err.Error(), true)
+			// Check if it was a cancellation
+			if m.cancelled {
+				m.log.Append("Processing cancelled by user", true)
+			} else {
+				m.log.Append("ERROR: "+msg.err.Error(), true)
+			}
 		} else {
 			m.log.Append("Run complete!", false)
 		}
@@ -231,16 +311,38 @@ func (m ProcessModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.done {
-			switch msg.String() {
-			case "q", "esc", "enter":
-				if m.result != nil {
-					rm := NewReportModel(m.result, m.width, m.height)
-					return m, func() tea.Msg {
-						return SwitchScreenMsg{To: ScreenReport, Report: &rm}
+		switch msg.String() {
+		case "enter":
+			if !m.running && !m.done {
+				// Start processing
+				m.running = true
+				m.startTime = time.Now()
+				return m, m.startProcessing()
+			}
+			if m.done {
+				// Return to dashboard after processing completes
+				return m, func() tea.Msg {
+					return SwitchScreenMsg{
+						To:      ScreenDashboard,
+						Session: m.session,
 					}
 				}
-				return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenSessions} }
+			}
+		case "esc", "q":
+			if m.running {
+				// Cancel running processing
+				m.cancelled = true
+				if m.cancelFunc != nil && *m.cancelFunc != nil {
+					(*m.cancelFunc)()
+				}
+				return m, nil
+			}
+			// Not running - go back to dashboard
+			return m, func() tea.Msg {
+				return SwitchScreenMsg{
+					To:      ScreenDashboard,
+					Session: m.session,
+				}
 			}
 		}
 	}
@@ -275,21 +377,43 @@ func (m ProcessModel) View() string {
 	var leftSB strings.Builder
 	leftSB.WriteString(processHeaderStyle.Render("Processing Takeout"))
 	leftSB.WriteString("\n")
-	for _, bar := range m.phases {
-		leftSB.WriteString(bar.View())
-		leftSB.WriteString("\n")
-	}
-	leftSB.WriteString("\n")
-	leftSB.WriteString(statLabelStyle.Render("Throughput"))
-	leftSB.WriteString("\n")
-	leftSB.WriteString(m.sparkline.View())
 
-	if m.done {
+	// Show pre-run prompt if not started yet
+	if !m.running && !m.done {
+		leftSB.WriteString("\n")
+		leftSB.WriteString(statLabelStyle.Render("Source: "))
+		leftSB.WriteString(statValueStyle.Render(m.cfg.SourceDir))
+		leftSB.WriteString("\n")
+		leftSB.WriteString(statLabelStyle.Render("Output: "))
+		leftSB.WriteString(statValueStyle.Render(m.cfg.DestDir))
 		leftSB.WriteString("\n\n")
-		if m.err != nil {
-			leftSB.WriteString(errorMsgStyle.Render("Error: " + m.err.Error()))
-		} else {
-			leftSB.WriteString(helpStyle.Render("enter/q → report"))
+		leftSB.WriteString(helpStyle.Render("Press ENTER to start processing"))
+		leftSB.WriteString("\n")
+		leftSB.WriteString(helpStyle.Render("Press ESC to go back"))
+	} else {
+		for _, bar := range m.phases {
+			leftSB.WriteString(bar.View())
+			leftSB.WriteString("\n")
+		}
+		leftSB.WriteString("\n")
+		leftSB.WriteString(statLabelStyle.Render("Throughput"))
+		leftSB.WriteString("\n")
+		leftSB.WriteString(m.sparkline.View())
+
+		if m.running {
+			leftSB.WriteString("\n\n")
+			leftSB.WriteString(helpStyle.Render("Press ESC/q to cancel"))
+		}
+
+		if m.done {
+			leftSB.WriteString("\n\n")
+			if m.cancelled {
+				leftSB.WriteString(errorMsgStyle.Render("Processing cancelled"))
+			} else if m.err != nil {
+				leftSB.WriteString(errorMsgStyle.Render("Error: " + m.err.Error()))
+			} else {
+				leftSB.WriteString(helpStyle.Render("enter/q → dashboard"))
+			}
 		}
 	}
 

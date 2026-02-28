@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -65,6 +66,10 @@ type FilePicker struct {
 	// AllowedExts filters selectable files in ModeFile/ModeMultiFile (e.g. []string{".zip"}).
 	// Empty means all files are allowed.
 	AllowedExts []string
+
+	// Folder creation (ModeDir only)
+	creating    bool            // true when in folder creation mode
+	createInput textinput.Model // text input for new folder name
 }
 
 // NewFilePicker creates a FilePicker starting in the user's home directory.
@@ -73,17 +78,26 @@ func NewFilePicker(mode PickerMode) FilePicker {
 	if startDir == "" {
 		startDir = "."
 	}
+
+	ti := textinput.New()
+	ti.Placeholder = "folder name"
+	ti.CharLimit = 255
+
 	return FilePicker{
-		Mode:     mode,
-		dir:      startDir,
-		height:   20, // reasonable default; updated on WindowSizeMsg
-		selected: make(map[string]bool),
+		Mode:        mode,
+		dir:         startDir,
+		height:      20, // reasonable default; updated on WindowSizeMsg
+		selected:    make(map[string]bool),
+		createInput: ti,
 	}
 }
 
 // Init returns the command that reads the initial directory.
 func (p FilePicker) Init() tea.Cmd {
-	return p.readDirCmd(p.dir)
+	return tea.Batch(
+		p.readDirCmd(p.dir),
+		textinput.Blink,
+	)
 }
 
 func (p FilePicker) readDirCmd(dir string) tea.Cmd {
@@ -122,6 +136,11 @@ func (p FilePicker) readDirCmd(dir string) tea.Cmd {
 
 // Update processes messages.
 func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
+	// Handle folder creation mode separately
+	if p.creating {
+		return p.updateCreating(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		p.height = msg.Height - 6 // room for path header + help footer
@@ -201,6 +220,13 @@ func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 					}
 				}
 			}
+		case "n": // Create new folder (ModeDir only)
+			if p.Mode == ModeDir {
+				p.creating = true
+				p.createInput.SetValue("")
+				p.createInput.Focus()
+				return p, nil
+			}
 		case "~": // Jump to home
 			home, _ := os.UserHomeDir()
 			if home != "" {
@@ -221,6 +247,43 @@ func (p FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 		}
 	}
 	return p, nil
+}
+
+// updateCreating handles input when in folder creation mode.
+func (p FilePicker) updateCreating(msg tea.Msg) (FilePicker, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			p.creating = false
+			p.createInput.Blur()
+			return p, nil
+		case "enter":
+			name := strings.TrimSpace(p.createInput.Value())
+			if name == "" {
+				p.creating = false
+				p.createInput.Blur()
+				return p, nil
+			}
+			// Create the folder
+			newPath := filepath.Join(p.dir, name)
+			if err := os.MkdirAll(newPath, 0o755); err != nil {
+				p.Err = fmt.Errorf("failed to create folder: %w", err)
+				p.creating = false
+				p.createInput.Blur()
+				return p, nil
+			}
+			// Success - refresh the directory listing and navigate into new folder
+			p.creating = false
+			p.createInput.Blur()
+			p.Err = nil
+			return p, p.readDirCmd(newPath)
+		}
+	}
+
+	var cmd tea.Cmd
+	p.createInput, cmd = p.createInput.Update(msg)
+	return p, cmd
 }
 
 func (p FilePicker) handleOpen() (FilePicker, tea.Cmd) {
@@ -315,6 +378,16 @@ func (p FilePicker) View() string {
 	sb.WriteString(fpDisabledStyle.Render(strings.Repeat("─", rulerLen)))
 	sb.WriteString("\n")
 
+	// Show folder creation prompt
+	if p.creating {
+		sb.WriteString(fpCountStyle.Render("New folder name:"))
+		sb.WriteString("\n")
+		sb.WriteString(p.createInput.View())
+		sb.WriteString("\n\n")
+		sb.WriteString(fpHelpStyle.Render("enter create  esc cancel"))
+		return sb.String()
+	}
+
 	// Show selection count in multi-file mode
 	if p.Mode == ModeMultiFile && len(p.selected) > 0 {
 		sb.WriteString(fpCountStyle.Render(fmt.Sprintf("%d file(s) selected", len(p.selected))))
@@ -386,7 +459,7 @@ func (p FilePicker) View() string {
 	sb.WriteString("\n")
 	switch p.Mode {
 	case ModeDir:
-		sb.WriteString(fpHelpStyle.Render("enter open  space select dir  backspace parent  ~ home  esc cancel"))
+		sb.WriteString(fpHelpStyle.Render("enter open  space select  n new folder  backspace parent  ~ home  esc cancel"))
 	case ModeMultiFile:
 		sb.WriteString(fpHelpStyle.Render("space toggle  enter confirm  backspace parent  ~ home  esc cancel"))
 	default:

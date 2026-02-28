@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fulgidus/revoco/engine"
+	"github.com/fulgidus/revoco/session"
 )
 
 var (
@@ -46,7 +47,6 @@ type AnalyzeMode int
 
 const (
 	AnalyzeModeProcess AnalyzeMode = iota
-	AnalyzeModeRecover
 )
 
 // AnalyzeModel is the pre-flight analyzer screen.
@@ -98,6 +98,28 @@ func NewAnalyzeModel(mode AnalyzeMode, source, dest, cookieJar, inputJSON, sessi
 	}
 }
 
+// NewAnalyzeModelFromSession creates an AnalyzeModel for a connector-based session.
+// It analyzes the session's data directory where retrieved data is stored.
+func NewAnalyzeModelFromSession(sess *session.Session) AnalyzeModel {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
+	m := AnalyzeModel{
+		mode:     AnalyzeModeProcess,
+		spin:     sp,
+		scanning: true,
+	}
+
+	if sess != nil {
+		m.sourceDir = sess.DataDir()
+		m.destDir = sess.OutputPath()
+		m.sessionDir = sess.Dir
+	}
+
+	return m
+}
+
 // Init implements tea.Model — starts the analyzer goroutine and the spinner.
 func (m AnalyzeModel) Init() tea.Cmd {
 	src := m.sourceDir
@@ -144,7 +166,7 @@ func (m AnalyzeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			return m.activate()
 		case "esc", "q":
-			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenDashboard} }
 		}
 	}
 	return m, nil
@@ -152,8 +174,8 @@ func (m AnalyzeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m AnalyzeModel) activate() (tea.Model, tea.Cmd) {
 	if m.focus == 1 || m.err != nil && m.focus == 0 {
-		// Cancel — back to welcome
-		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenWelcome} }
+		// Cancel — back to dashboard
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenDashboard} }
 	}
 	// Start — launch the actual operation
 	switch m.mode {
@@ -161,11 +183,6 @@ func (m AnalyzeModel) activate() (tea.Model, tea.Cmd) {
 		pm := NewProcessModel(m.sourceDir, m.destDir, m.sessionDir, m.width, m.height)
 		return m, func() tea.Msg {
 			return SwitchScreenMsg{To: ScreenProcess, Process: &pm}
-		}
-	case AnalyzeModeRecover:
-		rm := NewRecoverModel(m.cookieJar, m.inputJSON, m.sessionDir, m.width, m.height)
-		return m, func() tea.Msg {
-			return SwitchScreenMsg{To: ScreenRecover, Recover: &rm}
 		}
 	}
 	return m, nil
