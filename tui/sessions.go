@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -160,7 +161,9 @@ type SessionsModel struct {
 	pendingSession *session.Session
 
 	// Loading state
-	loading bool
+	loading        bool
+	loadingMessage string
+	spinner        spinner.Model
 }
 
 // NewSessionsModel creates the session management screen.
@@ -168,10 +171,17 @@ func NewSessionsModel() SessionsModel {
 	ti := textinput.New()
 	ti.Placeholder = "Session name"
 	ti.CharLimit = 64
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	return SessionsModel{
-		mode:    sessModeList,
-		input:   ti,
-		loading: true,
+		mode:           sessModeList,
+		input:          ti,
+		spinner:        sp,
+		loading:        true,
+		loadingMessage: "Loading sessions...",
 	}
 }
 
@@ -179,6 +189,7 @@ func NewSessionsModel() SessionsModel {
 func (m SessionsModel) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
+		m.spinner.Tick,
 		loadSessions,
 	)
 }
@@ -196,8 +207,14 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
 	case sessListLoadedMsg:
 		m.loading = false
+		m.loadingMessage = ""
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
@@ -220,6 +237,8 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadSessions
 
 	case sessRenamedMsg:
+		m.loading = false
+		m.loadingMessage = ""
 		if msg.err != nil {
 			m.err = msg.err
 		}
@@ -227,6 +246,8 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadSessions
 
 	case sessDeletedMsg:
+		m.loading = false
+		m.loadingMessage = ""
 		if msg.err != nil {
 			m.err = msg.err
 		}
@@ -235,6 +256,8 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadSessions
 
 	case sessImportDoneMsg:
+		m.loading = false
+		m.loadingMessage = ""
 		m.pickerOpen = false
 		if msg.err != nil {
 			m.err = msg.err
@@ -253,6 +276,11 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = sessModeList
 		return m, loadSessions
+	}
+
+	// If loading, only handle spinner updates
+	if m.loading {
+		return m, nil
 	}
 
 	// Delegate based on mode
@@ -394,10 +422,15 @@ func (m SessionsModel) updateDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "y", "Y", "enter":
 			name := m.sessions[m.cursor].Config.Name
-			return m, func() tea.Msg {
-				err := session.Remove(name)
-				return sessDeletedMsg{err: err}
-			}
+			m.loading = true
+			m.loadingMessage = "Deleting session..."
+			return m, tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg {
+					err := session.Remove(name)
+					return sessDeletedMsg{err: err}
+				},
+			)
 		case "n", "N", "esc":
 			m.mode = sessModeList
 			return m, nil
@@ -499,10 +532,15 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case importFolder:
 			// Single folder selection - import directly
 			selected := m.picker.Selected
-			return m, func() tea.Msg {
-				err := sess.ImportFolder(selected)
-				return sessImportDoneMsg{err: err}
-			}
+			m.loading = true
+			m.loadingMessage = "Importing folder..."
+			return m, tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg {
+					err := sess.ImportFolder(selected)
+					return sessImportDoneMsg{err: err}
+				},
+			)
 
 		case importZip:
 			// Multi-file selection - extract to session source folder
@@ -511,10 +549,15 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = sessModeImport
 				return m, nil
 			}
-			return m, func() tea.Msg {
-				err := sess.ImportZipMulti(selectedFiles, "")
-				return sessImportDoneMsg{err: err}
-			}
+			m.loading = true
+			m.loadingMessage = fmt.Sprintf("Extracting %d zip file(s)...", len(selectedFiles))
+			return m, tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg {
+					err := sess.ImportZipMulti(selectedFiles, "")
+					return sessImportDoneMsg{err: err}
+				},
+			)
 
 		case importTGZ:
 			// Multi-file selection - extract to session source folder
@@ -523,10 +566,15 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = sessModeImport
 				return m, nil
 			}
-			return m, func() tea.Msg {
-				err := sess.ImportTGZMulti(selectedFiles, "")
-				return sessImportDoneMsg{err: err}
-			}
+			m.loading = true
+			m.loadingMessage = fmt.Sprintf("Extracting %d archive(s)...", len(selectedFiles))
+			return m, tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg {
+					err := sess.ImportTGZMulti(selectedFiles, "")
+					return sessImportDoneMsg{err: err}
+				},
+			)
 		}
 	}
 	return m, cmd
@@ -535,6 +583,11 @@ func (m SessionsModel) updateImportPick(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ── View ─────────────────────────────────────────────────────────────────────
 
 func (m SessionsModel) View() string {
+	// Show loading spinner for any long operation
+	if m.loading {
+		return m.viewLoading()
+	}
+
 	if m.pickerOpen {
 		return m.viewPicker()
 	}
@@ -553,6 +606,25 @@ func (m SessionsModel) View() string {
 	return m.viewList()
 }
 
+func (m SessionsModel) viewLoading() string {
+	var sb strings.Builder
+	sb.WriteString(sessionTitleStyle.Render("revoco"))
+	sb.WriteString("\n")
+	sb.WriteString(subtitleStyle.Render("Google Photos Takeout processor & recovery tool"))
+	sb.WriteString("\n\n")
+
+	msg := m.loadingMessage
+	if msg == "" {
+		msg = "Loading..."
+	}
+	sb.WriteString(m.spinner.View())
+	sb.WriteString(" ")
+	sb.WriteString(descStyle.Render(msg))
+	sb.WriteString("\n\n")
+	sb.WriteString(helpStyle.Render("Please wait..."))
+	return sb.String()
+}
+
 func (m SessionsModel) viewList() string {
 	var sb strings.Builder
 
@@ -560,11 +632,6 @@ func (m SessionsModel) viewList() string {
 	sb.WriteString("\n")
 	sb.WriteString(subtitleStyle.Render("Google Photos Takeout processor & recovery tool"))
 	sb.WriteString("\n\n")
-
-	if m.loading {
-		sb.WriteString(descStyle.Render("Loading sessions..."))
-		return sb.String()
-	}
 
 	if m.err != nil {
 		sb.WriteString(sessionDangerStyle.Render("Error: " + m.err.Error()))
