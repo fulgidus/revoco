@@ -87,6 +87,12 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		log.Printf("[plugins] Warning: could not create plugin directories: %v", err)
 	}
 
+	// Extract default plugins on first run (or when version changes)
+	if err := ExtractDefaultPlugins(""); err != nil {
+		log.Printf("[plugins] Warning: could not extract default plugins: %v", err)
+		// Continue - this is not fatal
+	}
+
 	// Load all discovered plugins
 	if err := m.loader.LoadAll(ctx); err != nil {
 		log.Printf("[plugins] Warning: some plugins failed to load: %v", err)

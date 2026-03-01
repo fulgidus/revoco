@@ -46,8 +46,22 @@ Track import/export operations with versioned schemas, connector configurations,
 
 ## Installation
 
+### Quick Install (Linux/macOS)
+
 ```sh
-# Build from source (requires Go 1.21+)
+curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash
+```
+
+### From GitHub Releases
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/fulgidus/revoco/releases).
+
+### Build from Source
+
+```sh
+# Requires Go 1.23+
+git clone https://github.com/fulgidus/revoco.git
+cd revoco
 make build
 
 # Or with bundled exiftool + ffmpeg
@@ -60,10 +74,45 @@ make bundle
 
 ```sh
 # Launch TUI
-./revoco
+revoco
 
 # Non-interactive processing
-./revoco process --source ~/Takeout --dest ~/Photos
+revoco process --source ~/Takeout --dest ~/Photos
+
+# Check for updates
+revoco update
+
+# Install the latest version
+revoco update --install
+```
+
+### Plugin Management
+
+```sh
+# List installed plugins
+revoco plugins list
+
+# Search for plugins
+revoco plugins search csv
+
+# Install a plugin
+revoco plugins install <plugin-id>
+
+# Update plugins
+revoco plugins update --all
+```
+
+### Configuration
+
+```sh
+# Show current config
+revoco config show
+
+# Enable automatic update checks
+revoco config set updates.auto-check true
+
+# Enable automatic plugin updates
+revoco config set plugins.auto-update true
 ```
 
 ---

@@ -11,6 +11,9 @@ import (
 )
 
 func main() {
+	// Set version info for CLI
+	cmd.SetVersionInfo(VersionInfo, FullVersionInfo)
+
 	// If invoked with no arguments, launch the TUI.
 	if cmd.NeedsTUI() {
 		app := tui.NewApp()

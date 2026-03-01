@@ -33,6 +33,10 @@ var (
 	flagChromeDB   string
 	flagCookieOut  string
 	flagSession    string // --session name
+
+	// Version info - set by main package
+	versionFunc     func() string
+	fullVersionFunc func() string
 )
 
 // rootCmd is the base command (revoco process).
@@ -44,6 +48,7 @@ var rootCmd = &cobra.Command{
 Run without flags to launch the interactive TUI.
 Use --no-tui together with --source / --dest for headless / CI use.
 Use --session to work within a named session.`,
+	Version: "dev", // Will be set by SetVersionInfo
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if flagNoTUI {
 			return runProcessHeadless()
@@ -195,6 +200,26 @@ func Execute() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// SetVersionInfo sets the version functions from main package.
+func SetVersionInfo(version, fullVersion func() string) {
+	versionFunc = version
+	fullVersionFunc = fullVersion
+	if version != nil {
+		rootCmd.Version = version()
+	}
+	if fullVersion != nil {
+		rootCmd.SetVersionTemplate("{{.Name}} {{.Version}}\n")
+	}
+}
+
+// GetVersion returns the current version string.
+func GetVersion() string {
+	if versionFunc != nil {
+		return versionFunc()
+	}
+	return "dev"
 }
 
 // NeedsTUI returns true when no subcommand was given and --no-tui is not set.
