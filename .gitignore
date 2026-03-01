@@ -1,0 +1,28 @@
+# Agent tracking file - never commit
+AGENT.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+/revoco
+/dist/
+*.exe
+
+# Test artifacts
+coverage.out
+*.test
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Credentials (never commit)
+*.pem
+*.key
+credentials.json
+token.json

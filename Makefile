@@ -12,6 +12,16 @@ BINARY   := revoco
 MODULE   := github.com/fulgidus/revoco
 BIN_DIR  := internal/bundled/bin
 
+# ── version info ─────────────────────────────────────────────────────────────
+VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+DATE     ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+LDFLAGS  := -s -w \
+	-X main.Version=$(VERSION) \
+	-X main.Commit=$(COMMIT) \
+	-X main.BuildDate=$(DATE)
+
 # ── tool versions ────────────────────────────────────────────────────────────
 EXIFTOOL_VER  := 13.10
 FFMPEG_VER    := 7.1.1
@@ -31,12 +41,12 @@ FFMPEG_WIN_AMD64    := https://github.com/BtbN/FFmpeg-Builds/releases/download/l
 
 # ── dev build (no bundled tools) ─────────────────────────────────────────────
 build:
-	go build -o $(BINARY) .
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 # ── bundle for current host platform ─────────────────────────────────────────
 bundle:
 	$(MAKE) bundle-$(shell go env GOOS)-$(shell go env GOARCH)
-	go build -tags with_bundled_tools -o $(BINARY) .
+	go build -tags with_bundled_tools -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 # ── Linux amd64 ──────────────────────────────────────────────────────────────
 bundle-linux-amd64: $(BIN_DIR)/exiftool $(BIN_DIR)/ffmpeg
@@ -81,10 +91,10 @@ bundle-all: bundle-linux-amd64
 
 # ── cross-compile release binaries ───────────────────────────────────────────
 release: bundle-all
-	GOOS=linux  GOARCH=amd64 go build -tags with_bundled_tools -o dist/$(BINARY)-linux-amd64   .
-	GOOS=darwin GOARCH=amd64 go build -tags with_bundled_tools -o dist/$(BINARY)-darwin-amd64  .
-	GOOS=darwin GOARCH=arm64 go build -tags with_bundled_tools -o dist/$(BINARY)-darwin-arm64  .
-	GOOS=windows GOARCH=amd64 go build -tags with_bundled_tools -o dist/$(BINARY)-windows-amd64.exe .
+	GOOS=linux  GOARCH=amd64 go build -tags with_bundled_tools -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64   .
+	GOOS=darwin GOARCH=amd64 go build -tags with_bundled_tools -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64  .
+	GOOS=darwin GOARCH=arm64 go build -tags with_bundled_tools -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64  .
+	GOOS=windows GOARCH=amd64 go build -tags with_bundled_tools -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe .
 
 # ── clean ─────────────────────────────────────────────────────────────────────
 clean:

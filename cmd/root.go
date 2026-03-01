@@ -2,18 +2,26 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/fulgidus/revoco/config"
 	cookiespkg "github.com/fulgidus/revoco/cookies"
 	"github.com/fulgidus/revoco/engine"
+	"github.com/fulgidus/revoco/plugins"
 	"github.com/fulgidus/revoco/secrets"
 	"github.com/fulgidus/revoco/session"
 
 	// Import services to trigger registration
 	_ "github.com/fulgidus/revoco/services"
+
+	// Import lua package to register the Lua plugin factory
+	_ "github.com/fulgidus/revoco/plugins/lua"
 )
 
 var (
@@ -33,6 +41,10 @@ var (
 	flagChromeDB   string
 	flagCookieOut  string
 	flagSession    string // --session name
+
+	// Version info - set by main package
+	versionFunc     func() string
+	fullVersionFunc func() string
 )
 
 // rootCmd is the base command (revoco process).
@@ -44,6 +56,21 @@ var rootCmd = &cobra.Command{
 Run without flags to launch the interactive TUI.
 Use --no-tui together with --source / --dest for headless / CI use.
 Use --session to work within a named session.`,
+	Version: "dev", // Will be set by SetVersionInfo
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Skip initialization for version and help commands
+		if cmd.Name() == "help" || cmd.Name() == "__complete" || cmd.Name() == "__completeNoDesc" {
+			return nil
+		}
+
+		// Check if --version flag was passed
+		versionFlag, _ := cmd.Flags().GetBool("version")
+		if versionFlag {
+			return nil
+		}
+
+		return initializeOnStartup(cmd)
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if flagNoTUI {
 			return runProcessHeadless()
@@ -197,6 +224,26 @@ func Execute() {
 	}
 }
 
+// SetVersionInfo sets the version functions from main package.
+func SetVersionInfo(version, fullVersion func() string) {
+	versionFunc = version
+	fullVersionFunc = fullVersion
+	if version != nil {
+		rootCmd.Version = version()
+	}
+	if fullVersion != nil {
+		rootCmd.SetVersionTemplate("{{.Name}} {{.Version}}\n")
+	}
+}
+
+// GetVersion returns the current version string.
+func GetVersion() string {
+	if versionFunc != nil {
+		return versionFunc()
+	}
+	return "dev"
+}
+
 // NeedsTUI returns true when no subcommand was given and --no-tui is not set.
 func NeedsTUI() bool {
 	return !flagNoTUI && len(os.Args) == 1
@@ -319,4 +366,84 @@ func runDecryptCookies() error {
 	}
 	fmt.Printf("Decrypted %d cookies -> %s\n", count, flagCookieOut)
 	return nil
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Startup Initialization
+// ══════════════════════════════════════════════════════════════════════════════
+
+// initializeOnStartup handles plugin initialization and update checks on startup.
+func initializeOnStartup(cmd *cobra.Command) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 1. Initialize plugin system (required - fail if error)
+	fmt.Fprintln(os.Stderr, "[plugins] Initializing plugin system...")
+	if err := plugins.InitializePlugins(ctx); err != nil {
+		return fmt.Errorf("plugin initialization failed: %w", err)
+	}
+
+	// 2. Check for revoco updates
+	checkAndPrintUpdates(ctx)
+
+	// 3. Check for plugin updates if enabled
+	cfg := config.Get()
+	if cfg.Plugins.AutoUpdate {
+		checkAndPrintPluginUpdates(ctx, cfg)
+	}
+
+	return nil
+}
+
+// checkAndPrintUpdates checks for revoco updates and prints the result to stderr.
+func checkAndPrintUpdates(ctx context.Context) {
+	fmt.Fprintln(os.Stderr, "[updates] Checking for revoco updates...")
+
+	release, err := fetchLatestRelease(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[updates] Unable to check for updates: %v\n", err)
+		return
+	}
+
+	currentVersion := GetVersion()
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	currentClean := strings.TrimPrefix(currentVersion, "v")
+
+	if currentClean == latestVersion {
+		fmt.Fprintf(os.Stderr, "[updates] revoco is up to date (v%s)\n", currentClean)
+	} else if currentClean == "dev" {
+		fmt.Fprintf(os.Stderr, "[updates] Running development version (latest release: v%s)\n", latestVersion)
+	} else {
+		fmt.Fprintf(os.Stderr, "[updates] Update available: v%s -> v%s (run 'revoco update --install' to upgrade)\n",
+			currentClean, latestVersion)
+	}
+
+	// Record check time
+	cfg := config.Get()
+	_ = cfg.RecordUpdateCheck()
+}
+
+// checkAndPrintPluginUpdates checks for plugin updates and prints the result to stderr.
+func checkAndPrintPluginUpdates(ctx context.Context, cfg *config.Config) {
+	fmt.Fprintln(os.Stderr, "[updates] Checking for plugin updates...")
+
+	installer := plugins.NewInstaller()
+	updates, err := installer.CheckUpdates(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[updates] Unable to check for plugin updates: %v\n", err)
+		return
+	}
+
+	if len(updates) == 0 {
+		fmt.Fprintln(os.Stderr, "[updates] All plugins are up to date")
+	} else {
+		fmt.Fprintf(os.Stderr, "[updates] %d plugin update(s) available:\n", len(updates))
+		for _, u := range updates {
+			fmt.Fprintf(os.Stderr, "  - %s: v%s -> v%s\n", u.ID, u.CurrentVersion, u.LatestVersion)
+		}
+		fmt.Fprintln(os.Stderr, "[updates] Run 'revoco plugins update --all' to upgrade")
+	}
+
+	// Record check time
+	_ = cfg.RecordPluginCheck()
 }

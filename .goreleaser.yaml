@@ -1,0 +1,115 @@
+# GoReleaser configuration for revoco
+# https://goreleaser.com
+#
+# To test locally: goreleaser release --snapshot --clean
+# To release: git tag v0.1.0 && git push origin v0.1.0
+
+version: 2
+
+project_name: revoco
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: revoco
+    main: .
+    binary: revoco
+    env:
+      - CGO_ENABLED=0
+    # Note: Building without bundled tools for now
+    # Users should install exiftool and ffmpeg via their package manager
+    # Future: Add bundled tools support once binary sources are stable
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildDate={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows arm64 is rare, skip for now
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    # Use zip for Windows
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - source.url
+      - LICENSE*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: fulgidus
+    name: revoco
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  header: |
+    ## Installation
+
+    ### Quick Install (Linux/macOS)
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash
+    ```
+
+    ### Manual Download
+    Download the appropriate archive for your platform below, extract it, and move the `revoco` binary to a directory in your PATH.
+
+    ### Checksums
+    Verify your download with the checksums.txt file.
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/fulgidus/revoco/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+# Disable features we're not using yet
+brews: []
+chocolateys: []
+nfpms: []
+snapcrafts: []
