@@ -77,9 +77,10 @@ func NewManager(opts ...ManagerOption) *Manager {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // Initialize discovers and loads all plugins.
+// This method is idempotent - calling it multiple times is safe.
 func (m *Manager) Initialize(ctx context.Context) error {
 	if m.initialized {
-		return fmt.Errorf("plugin manager already initialized")
+		return nil // Already initialized, no-op
 	}
 
 	// Ensure plugin directories exist
