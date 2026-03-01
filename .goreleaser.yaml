@@ -63,6 +63,7 @@ checksum:
 changelog:
   sort: asc
   use: github
+  # Only include commits since the previous tag
   filters:
     exclude:
       - '^docs:'
@@ -83,6 +84,12 @@ changelog:
       order: 2
     - title: Others
       order: 999
+
+# Git configuration for proper tag detection
+git:
+  # Ensure we get the correct previous tag for changelog
+  tag_sort: -version:refname
+  prerelease_suffix: "-"
 
 release:
   github:

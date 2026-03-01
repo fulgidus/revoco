@@ -200,6 +200,18 @@ main() {
     
     success "Installed ${BINARY} to ${INSTALL_DIR}"
     
+    # Record installation info for uninstaller
+    CONFIG_DIR="$HOME/.config/revoco"
+    mkdir -p "$CONFIG_DIR"
+    INSTALL_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+    cat > "${CONFIG_DIR}/install.json" << EOF
+{
+  "binary_path": "${INSTALL_DIR}/${BINARY}",
+  "version": "${VERSION}",
+  "installed_at": "${INSTALL_TIME}"
+}
+EOF
+    
     # Check if install dir is in PATH
     case ":$PATH:" in
         *":${INSTALL_DIR}:"*) ;;

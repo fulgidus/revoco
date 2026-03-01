@@ -117,6 +117,29 @@ revoco config set plugins.auto-update true
 
 ---
 
+## Uninstallation
+
+### Quick Uninstall (Interactive)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/uninstall.sh | bash
+```
+
+### Non-interactive Full Removal
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/uninstall.sh | bash -s -- --yes
+```
+
+The uninstaller will prompt to remove:
+- **Binary** — The revoco executable
+- **Config** — `~/.config/revoco/` (settings and plugin config)
+- **Plugins** — `~/.config/revoco/plugins/` (installed plugins)
+- **Sessions** — `~/.revoco/sessions/` (your work data — **use caution**)
+- **Cache** — `~/.cache/revoco/` (cached tools like exiftool)
+
+---
+
 ## License
 
 MIT
