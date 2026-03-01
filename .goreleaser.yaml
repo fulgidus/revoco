@@ -10,8 +10,7 @@ project_name: revoco
 
 before:
   hooks:
-    # Fetch bundled tools (exiftool, ffmpeg) before building
-    - make bundle-all
+    - go mod tidy
 
 builds:
   - id: revoco
@@ -19,8 +18,9 @@ builds:
     binary: revoco
     env:
       - CGO_ENABLED=0
-    flags:
-      - -tags=with_bundled_tools
+    # Note: Building without bundled tools for now
+    # Users should install exiftool and ffmpeg via their package manager
+    # Future: Add bundled tools support once binary sources are stable
     ldflags:
       - -s -w
       - -X main.Version={{.Version}}
@@ -40,11 +40,13 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     # Use zip for Windows
-    format_overrides:
+    overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
