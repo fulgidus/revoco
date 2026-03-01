@@ -43,7 +43,7 @@ archives:
     formats:
       - tar.gz
     # Use zip for Windows
-    overrides:
+    format_overrides:
       - goos: windows
         formats:
           - zip
