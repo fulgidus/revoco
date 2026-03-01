@@ -13,6 +13,27 @@ import (
 	core "github.com/fulgidus/revoco/connectors"
 )
 
+// PluginFactory creates a Plugin from discovered metadata.
+type PluginFactory func(dp *DiscoveredPlugin) (Plugin, error)
+
+// Global factories for different plugin tiers.
+var (
+	luaPluginFactory      PluginFactory
+	externalPluginFactory PluginFactory
+)
+
+// RegisterLuaPluginFactory registers the Lua plugin factory.
+// This is called by the lua package during initialization.
+func RegisterLuaPluginFactory(factory PluginFactory) {
+	luaPluginFactory = factory
+}
+
+// RegisterExternalPluginFactory registers the external plugin factory.
+// This is called by the external package during initialization.
+func RegisterExternalPluginFactory(factory PluginFactory) {
+	externalPluginFactory = factory
+}
+
 // Loader discovers and loads plugins from directories.
 type Loader struct {
 	registry *Registry
@@ -249,10 +270,11 @@ func (l *Loader) createPlugin(dp *DiscoveredPlugin) (Plugin, error) {
 }
 
 // createLuaPlugin creates a Lua plugin instance.
-// Actual Lua runtime integration will be in the lua package.
 func (l *Loader) createLuaPlugin(dp *DiscoveredPlugin) (Plugin, error) {
-	// This will be implemented when we add the Lua runtime
-	// For now, return a placeholder
+	if luaPluginFactory != nil {
+		return luaPluginFactory(dp)
+	}
+	// Fall back to stub if no factory registered
 	return &luaPluginStub{
 		info:    dp.Info,
 		path:    dp.Path,
@@ -261,10 +283,11 @@ func (l *Loader) createLuaPlugin(dp *DiscoveredPlugin) (Plugin, error) {
 }
 
 // createExternalPlugin creates an external plugin instance.
-// Actual external runtime integration will be in the external package.
 func (l *Loader) createExternalPlugin(dp *DiscoveredPlugin) (Plugin, error) {
-	// This will be implemented when we add the external runtime
-	// For now, return a placeholder
+	if externalPluginFactory != nil {
+		return externalPluginFactory(dp)
+	}
+	// Fall back to stub if no factory registered
 	return &externalPluginStub{
 		info:     dp.Info,
 		path:     dp.Path,

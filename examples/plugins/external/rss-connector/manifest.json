@@ -1,0 +1,49 @@
+{
+    "apiVersion": "revoco/v1",
+    "kind": "ExternalPlugin",
+    "metadata": {
+        "id": "rss-connector",
+        "name": "RSS Feed Connector",
+        "description": "Reads items from RSS/Atom feeds",
+        "version": "1.0.0",
+        "author": "revoco"
+    },
+    "spec": {
+        "type": "connector",
+        "runtime": {
+            "command": "python3",
+            "minVersion": "3.9",
+            "versionCheck": "python3 --version"
+        },
+        "entrypoint": "main.py",
+        "setup": {
+            "command": "pip install -r requirements.txt --quiet",
+            "runWhen": "requirements.txt"
+        },
+        "capabilities": ["read"],
+        "dataTypes": ["document"],
+        "configSchema": [
+            {
+                "id": "feed_url",
+                "name": "Feed URL",
+                "description": "URL of the RSS or Atom feed",
+                "type": "string",
+                "required": true
+            },
+            {
+                "id": "max_items",
+                "name": "Max Items",
+                "description": "Maximum number of items to fetch (0 for all)",
+                "type": "int",
+                "default": 100
+            },
+            {
+                "id": "include_content",
+                "name": "Include Content",
+                "description": "Include full article content if available",
+                "type": "bool",
+                "default": true
+            }
+        ]
+    }
+}
