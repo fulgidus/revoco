@@ -96,6 +96,7 @@ EOF
 }
 
 # Ask a yes/no question, return 0 for yes, 1 for no
+# Reads from /dev/tty if stdin is not a terminal (e.g., when piped via curl)
 ask() {
     prompt="$1"
     default="$2"  # "y" or "n"
@@ -111,7 +112,13 @@ ask() {
     fi
     
     printf "${BOLD}%s${NC} %s " "$prompt" "$prompt_suffix"
-    read -r answer
+    
+    # Read from /dev/tty if available (works when piped), otherwise stdin
+    if [ ! -t 0 ] && [ -e /dev/tty ]; then
+        read -r answer < /dev/tty
+    else
+        read -r answer
+    fi
     
     case "$answer" in
         [Yy]|[Yy][Ee][Ss])
@@ -191,9 +198,10 @@ remove_path_config() {
     fi
 }
 
-# Check if running interactively
-is_interactive() {
-    [ -t 0 ]
+# Check if we can run interactively
+# Returns true if stdin is a TTY, or if /dev/tty is available (piped via curl)
+can_interact() {
+    [ -t 0 ] || [ -e /dev/tty ]
 }
 
 # Calculate directory size
@@ -247,9 +255,9 @@ main() {
     info "revoco uninstaller"
     echo ""
     
-    # Check if interactive
-    if ! is_interactive && [ "$SKIP_PROMPTS" = false ]; then
-        error "Non-interactive mode detected. Use --yes flag to proceed without prompts.
+    # Check if we can interact with user
+    if ! can_interact && [ "$SKIP_PROMPTS" = false ]; then
+        error "Cannot read user input. Use --yes flag to proceed without prompts.
 
 Example:
   curl -fsSL .../uninstall.sh | bash -s -- --yes"
