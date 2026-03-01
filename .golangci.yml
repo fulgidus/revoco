@@ -1,0 +1,26 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  # Use Go 1.23 for linting to avoid version mismatch with golangci-lint
+  # The project uses Go 1.25 features but golangci-lint doesn't support it yet
+  go: '1.23'
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  staticcheck:
+    # Use Go 1.23 for staticcheck
+    go: '1.23'
+
+issues:
+  # Don't skip any directories
+  exclude-dirs: []

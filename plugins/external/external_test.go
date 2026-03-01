@@ -16,22 +16,28 @@ import (
 
 func TestJSONRPCClientCall(t *testing.T) {
 	// Create pipes to simulate stdin/stdout
+	// Use io.Pipe for thread-safe communication
+	clientOutReader, clientOutWriter := io.Pipe()
 	clientIn := &bytes.Buffer{}
-	clientOut := &bytes.Buffer{}
 
-	// Create client
-	client := NewClient(clientIn, clientOut)
+	// Create client - reads from clientOutReader (what plugin writes)
+	client := NewClient(clientIn, clientOutReader)
 	defer client.Close()
 
-	// Prepare a mock response in clientOut
+	// Prepare a mock response and write it in a goroutine to avoid race
 	response := Response{
 		JSONRPC: "2.0",
 		ID:      intPtr(1),
 		Result:  map[string]any{"success": true},
 	}
 	respData, _ := json.Marshal(response)
-	clientOut.Write(respData)
-	clientOut.Write([]byte("\n"))
+
+	// Write response asynchronously (simulating plugin response)
+	go func() {
+		defer clientOutWriter.Close()
+		clientOutWriter.Write(respData)
+		clientOutWriter.Write([]byte("\n"))
+	}()
 
 	// Call with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
