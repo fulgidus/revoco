@@ -24,6 +24,9 @@ type retrieveProgressMsg struct {
 	connectorID string
 	done        int
 	total       int
+	currentFile string // Name of file currently being downloaded
+	bytesTotal  int64  // Total bytes to download
+	bytesDone   int64  // Bytes downloaded so far
 }
 
 type retrieveCompleteMsg struct {
@@ -59,14 +62,21 @@ type RetrieveModel struct {
 
 	// Cancellation - using pointer so it persists across value copies
 	cancelFunc *context.CancelFunc
+
+	// Progress channel for real-time updates
+	progressChan chan retrieveProgressMsg
 }
 
 type retrieveConnectorState struct {
-	config   core.ConnectorConfig
-	done     int
-	total    int
-	complete bool
-	err      error
+	config      core.ConnectorConfig
+	done        int
+	total       int
+	complete    bool
+	err         error
+	currentFile string    // Current file being downloaded
+	bytesTotal  int64     // Total bytes to download
+	bytesDone   int64     // Bytes downloaded so far
+	startTime   time.Time // When retrieval started for this connector
 }
 
 // NewRetrieveModel creates the retrieval progress screen.
@@ -79,9 +89,10 @@ func NewRetrieveModel(sess *session.Session) RetrieveModel {
 	var cancelFunc context.CancelFunc
 
 	m := RetrieveModel{
-		session:    sess,
-		spinner:    sp,
-		cancelFunc: &cancelFunc,
+		session:      sess,
+		spinner:      sp,
+		cancelFunc:   &cancelFunc,
+		progressChan: make(chan retrieveProgressMsg, 100),
 	}
 
 	// Initialize connector states
@@ -117,8 +128,18 @@ func (m RetrieveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.connectors[i].config.InstanceID == msg.connectorID {
 				m.connectors[i].done = msg.done
 				m.connectors[i].total = msg.total
+				m.connectors[i].currentFile = msg.currentFile
+				m.connectors[i].bytesTotal = msg.bytesTotal
+				m.connectors[i].bytesDone = msg.bytesDone
+				if m.connectors[i].startTime.IsZero() && msg.done > 0 {
+					m.connectors[i].startTime = time.Now()
+				}
 				break
 			}
+		}
+		// Continue listening for more progress updates
+		if m.running {
+			return m, m.listenForProgress()
 		}
 		return m, nil
 
@@ -168,7 +189,7 @@ func (m RetrieveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.running && !m.complete {
 				// Start retrieval
 				m.running = true
-				return m, m.startRetrieval()
+				return m, tea.Batch(m.startRetrieval(), m.listenForProgress())
 			}
 		case "esc", "q":
 			if m.running {
@@ -191,10 +212,22 @@ func (m RetrieveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// listenForProgress returns a command that listens for progress updates from the channel.
+func (m RetrieveModel) listenForProgress() tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-m.progressChan
+		if !ok {
+			return nil // Channel closed
+		}
+		return msg
+	}
+}
+
 func (m RetrieveModel) startRetrieval() tea.Cmd {
 	sess := m.session
 	connectors := m.connectors
 	cancelFuncPtr := m.cancelFunc
+	progressChan := m.progressChan
 
 	// Create cancellable context and store cancel func via pointer
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -270,13 +303,40 @@ func (m RetrieveModel) startRetrieval() tea.Cmd {
 				return
 			}
 
+			// Calculate total size for progress
+			var totalBytes int64
+			for _, item := range items {
+				totalBytes += item.Size
+			}
+
 			// Retrieve each item
+			var downloadedBytes int64
 			for i, item := range items {
 				select {
 				case <-ctx.Done():
 					cancelled = true
 					return
 				default:
+				}
+
+				// Send progress update BEFORE downloading (shows current file)
+				fileName := item.Path
+				if fileName == "" {
+					fileName = item.ID
+				}
+				// Use just the filename for display, not full path
+				displayName := filepath.Base(fileName)
+				select {
+				case progressChan <- retrieveProgressMsg{
+					connectorID: cs.config.InstanceID,
+					done:        i,
+					total:       len(items),
+					currentFile: displayName,
+					bytesTotal:  totalBytes,
+					bytesDone:   downloadedBytes,
+				}:
+				default:
+					// Don't block if channel is full
 				}
 
 				// Determine destination path - use item.Path for proper filename/structure
@@ -287,7 +347,12 @@ func (m RetrieveModel) startRetrieval() tea.Cmd {
 					// Fallback to ID if Path is empty (shouldn't happen but be safe)
 					itemPath = item.ID
 				}
-				destPath := filepath.Join(dataDir, cs.config.InstanceID, itemPath)
+				// Use connector Name for the folder (e.g., "Google Drive") instead of InstanceID (UUID)
+				connectorFolder := cs.config.Name
+				if connectorFolder == "" {
+					connectorFolder = cs.config.InstanceID // Fallback to ID if Name empty
+				}
+				destPath := filepath.Join(dataDir, connectorFolder, itemPath)
 
 				// Read the item to destination
 				if err := reader.ReadTo(ctx, item, destPath, cs.config.ImportMode); err != nil {
@@ -302,15 +367,28 @@ func (m RetrieveModel) startRetrieval() tea.Cmd {
 					continue
 				}
 
+				// Update downloaded bytes
+				downloadedBytes += item.Size
+
 				// Update item path
 				item.Path = destPath
 
 				mu.Lock()
 				allItems = append(allItems, item)
 				mu.Unlock()
+			}
 
-				// Progress is tracked via items count
-				_ = i // Progress would be sent via channel in real impl
+			// Send final progress update
+			select {
+			case progressChan <- retrieveProgressMsg{
+				connectorID: cs.config.InstanceID,
+				done:        len(items),
+				total:       len(items),
+				currentFile: "",
+				bytesTotal:  totalBytes,
+				bytesDone:   downloadedBytes,
+			}:
+			default:
 			}
 		}
 
@@ -329,6 +407,9 @@ func (m RetrieveModel) startRetrieval() tea.Cmd {
 		}
 
 		wg.Wait()
+
+		// Close progress channel since we're done
+		close(progressChan)
 
 		// Check if cancelled
 		if ctx.Err() != nil || cancelled {
@@ -394,11 +475,39 @@ func (m RetrieveModel) View() string {
 		} else if cs.complete {
 			sb.WriteString(successStyle.Render("  Complete"))
 		} else if m.running {
+			sb.WriteString("  ")
 			sb.WriteString(m.spinner.View())
 			sb.WriteString(" ")
 			if cs.total > 0 {
 				pct := float64(cs.done) / float64(cs.total) * 100
-				sb.WriteString(fmt.Sprintf("%.0f%% (%d/%d)", pct, cs.done, cs.total))
+				sb.WriteString(fmt.Sprintf("%.0f%% (%d/%d files)", pct, cs.done, cs.total))
+
+				// Show ETA if we have timing data
+				if !cs.startTime.IsZero() && cs.done > 0 {
+					elapsed := time.Since(cs.startTime)
+					avgPerFile := elapsed / time.Duration(cs.done)
+					remaining := cs.total - cs.done
+					eta := avgPerFile * time.Duration(remaining)
+					if eta > time.Second {
+						sb.WriteString(fmt.Sprintf(" • ETA: %s", formatDuration(eta)))
+					}
+				}
+
+				// Show current file
+				if cs.currentFile != "" {
+					sb.WriteString("\n  ")
+					sb.WriteString(descStyle.Render("↳ " + truncateString(cs.currentFile, 50)))
+				}
+
+				// Show download speed if we have byte data
+				if cs.bytesDone > 0 && !cs.startTime.IsZero() {
+					elapsed := time.Since(cs.startTime).Seconds()
+					if elapsed > 0 {
+						speed := float64(cs.bytesDone) / elapsed
+						sb.WriteString("\n  ")
+						sb.WriteString(descStyle.Render(fmt.Sprintf("↳ %s @ %s/s", formatBytes(cs.bytesDone), formatBytes(int64(speed)))))
+					}
+				}
 			} else {
 				sb.WriteString("Scanning...")
 			}
@@ -424,4 +533,29 @@ func (m RetrieveModel) View() string {
 	}
 
 	return sb.String()
+}
+
+// formatBytes formats bytes in a human-readable way.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// truncateString truncates a string to max length with ellipsis.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
