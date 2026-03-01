@@ -16,11 +16,6 @@ linters:
     - staticcheck
     - unused
 
-linters-settings:
-  staticcheck:
-    # Use Go 1.23 for staticcheck
-    go: '1.23'
-
 issues:
   # Don't skip any directories
   exclude-dirs: []
