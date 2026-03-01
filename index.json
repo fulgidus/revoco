@@ -1,0 +1,57 @@
+{
+  "version": "1",
+  "last_updated": "2026-03-01T00:00:00Z",
+  "plugins": {
+    "google-photos-connector": {
+      "id": "google-photos-connector",
+      "name": "Google Photos Connector",
+      "description": "Connect directly to Google Photos API to fetch media and albums",
+      "author": "revoco",
+      "version": "0.1.0",
+      "type": "connector",
+      "tier": "lua",
+      "tags": ["google", "photos", "cloud", "api", "oauth2"],
+      "homepage": "https://github.com/fulgidus/revoco",
+      "repository": "https://github.com/fulgidus/revoco",
+      "license": "MIT",
+      "path": "connectors/google-photos-connector.lua",
+      "platforms": ["linux", "darwin", "windows"],
+      "min_version": "0.1.0"
+    },
+    "dropbox-output": {
+      "id": "dropbox-output",
+      "name": "Dropbox Output",
+      "description": "Export processed media directly to Dropbox",
+      "author": "revoco",
+      "version": "0.1.0",
+      "type": "output",
+      "tier": "lua",
+      "tags": ["dropbox", "cloud", "storage", "export", "oauth2"],
+      "homepage": "https://github.com/fulgidus/revoco",
+      "repository": "https://github.com/fulgidus/revoco",
+      "license": "MIT",
+      "path": "outputs/dropbox-output.lua",
+      "platforms": ["linux", "darwin", "windows"],
+      "min_version": "0.1.0"
+    },
+    "heic-processor": {
+      "id": "heic-processor",
+      "name": "HEIC Processor",
+      "description": "Convert HEIC images to JPEG/PNG with metadata preservation",
+      "author": "revoco",
+      "version": "0.1.0",
+      "type": "processor",
+      "tier": "lua",
+      "tags": ["heic", "heif", "conversion", "apple", "iphone", "imagemagick"],
+      "homepage": "https://github.com/fulgidus/revoco",
+      "repository": "https://github.com/fulgidus/revoco",
+      "license": "MIT",
+      "path": "processors/heic-processor.lua",
+      "platforms": ["linux", "darwin", "windows"],
+      "min_version": "0.1.0",
+      "metadata": {
+        "requires": "imagemagick"
+      }
+    }
+  }
+}
