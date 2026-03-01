@@ -231,11 +231,14 @@ func (c *OAuth2Client) StartAuthFlow(ctx context.Context) (authURL string, token
 				return
 			}
 
-			// Exchange code for token
-			token, err := c.exchangeCode(ctx, code, redirectURI)
+			// Exchange code for token - use a fresh context since the original may have timed out
+			// while waiting for user to complete browser auth
+			exchangeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			token, err := c.exchangeCode(exchangeCtx, code, redirectURI)
 			if err != nil {
 				eChan <- fmt.Errorf("exchange code: %w", err)
-				http.Error(w, "Token exchange failed", http.StatusInternalServerError)
+				http.Error(w, "Token exchange failed: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 
@@ -305,8 +308,10 @@ func (c *OAuth2Client) exchangeCode(ctx context.Context, code, redirectURI strin
 			Error       string `json:"error"`
 			Description string `json:"error_description"`
 		}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.Description)
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&errResp); decodeErr != nil || errResp.Error == "" {
+			return nil, fmt.Errorf("token exchange failed with status %d (check client_id and client_secret)", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("token exchange: %s - %s", errResp.Error, errResp.Description)
 	}
 
 	var tokenResp struct {
@@ -361,25 +366,39 @@ func (c *OAuth2Client) refreshToken(ctx context.Context, refreshToken string) (*
 			Error       string `json:"error"`
 			Description string `json:"error_description"`
 		}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.Description)
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&errResp); decodeErr != nil || errResp.Error == "" {
+			return nil, fmt.Errorf("token refresh failed with status %d (may need to re-authenticate)", resp.StatusCode)
+		}
+		// Provide helpful hints for common errors
+		hint := ""
+		if errResp.Error == "invalid_grant" {
+			hint = " - refresh token may have been revoked or expired, please re-authenticate"
+		}
+		return nil, fmt.Errorf("token refresh: %s - %s%s", errResp.Error, errResp.Description, hint)
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int    `json:"expires_in"`
-		Scope       string `json:"scope"`
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
+		RefreshToken string `json:"refresh_token,omitempty"` // Google may return a new refresh token
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return nil, fmt.Errorf("decode token: %w", err)
 	}
 
+	// Use the new refresh token if Google returned one, otherwise keep the original
+	newRefreshToken := refreshToken
+	if tokenResp.RefreshToken != "" {
+		newRefreshToken = tokenResp.RefreshToken
+	}
+
 	token := &OAuth2Token{
 		AccessToken:  tokenResp.AccessToken,
 		TokenType:    tokenResp.TokenType,
-		RefreshToken: refreshToken, // Keep the original refresh token
+		RefreshToken: newRefreshToken,
 		Scope:        tokenResp.Scope,
 	}
 
