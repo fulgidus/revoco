@@ -85,11 +85,12 @@ Examples:
   curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/uninstall.sh | bash -s -- --yes
 
 Components that may be removed:
-  - Binary:    The revoco executable (location from install.json)
-  - Config:    ~/.config/revoco/ (config files)
-  - Plugins:   ~/.config/revoco/plugins/ (installed plugins)
-  - Sessions:  ~/.revoco/sessions/ (your work sessions - DATA LOSS WARNING)
-  - Cache:     ~/.cache/revoco/ (cached binary tools like exiftool)
+  - Binary:       The revoco executable (location from install.json)
+  - Shell config: PATH configuration added to your shell profile
+  - Config:       ~/.config/revoco/ (config files)
+  - Plugins:      ~/.config/revoco/plugins/ (installed plugins)
+  - Sessions:     ~/.revoco/sessions/ (your work sessions - DATA LOSS WARNING)
+  - Cache:        ~/.cache/revoco/ (cached binary tools like exiftool)
 
 EOF
 }
@@ -138,6 +139,55 @@ get_binary_path() {
         # Parse JSON manually (portable)
         grep '"binary_path"' "$INSTALL_INFO" 2>/dev/null | \
             sed 's/.*"binary_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+    fi
+}
+
+# Get shell config file from install.json or return empty
+get_shell_config() {
+    if [ -f "$INSTALL_INFO" ]; then
+        grep '"shell_config_file"' "$INSTALL_INFO" 2>/dev/null | \
+            sed 's/.*"shell_config_file"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true
+    fi
+}
+
+# Remove PATH configuration from shell config file
+# Returns 0 on success, 1 if not found or error
+remove_path_config() {
+    shell_config="$1"
+    
+    if [ -z "$shell_config" ] || [ ! -f "$shell_config" ]; then
+        return 1
+    fi
+    
+    # Check if our markers exist
+    if ! grep -q "# Added by revoco installer" "$shell_config" 2>/dev/null; then
+        return 1
+    fi
+    
+    # Create backup
+    cp "$shell_config" "${shell_config}.revoco-backup"
+    
+    # Remove lines between markers (inclusive) using sed
+    # This handles the block: # Added by revoco installer ... # End revoco
+    if sed -i.bak '/# Added by revoco installer/,/# End revoco/d' "$shell_config" 2>/dev/null; then
+        rm -f "${shell_config}.bak"
+        
+        # Clean up trailing empty lines at end of file
+        # Use a temp file approach for portability
+        while [ "$(tail -c 1 "$shell_config" 2>/dev/null | wc -l)" -eq 0 ] && \
+              [ "$(tail -n 1 "$shell_config" 2>/dev/null)" = "" ] && \
+              [ "$(wc -l < "$shell_config")" -gt 0 ]; do
+            # Remove last empty line
+            sed -i.bak '$ { /^$/d }' "$shell_config" 2>/dev/null || break
+            rm -f "${shell_config}.bak"
+        done
+        
+        rm -f "${shell_config}.revoco-backup"
+        return 0
+    else
+        # Restore backup on failure
+        mv "${shell_config}.revoco-backup" "$shell_config"
+        return 1
     fi
 }
 
@@ -221,6 +271,9 @@ Example:
         info "Installation record found: $BINARY_PATH"
     fi
     
+    # Get shell config file
+    SHELL_CONFIG_FILE=$(get_shell_config)
+    
     # Show what will be examined
     echo ""
     echo "Components found:"
@@ -228,20 +281,30 @@ Example:
     
     # Binary
     if [ -n "$BINARY_PATH" ] && [ -f "$BINARY_PATH" ]; then
-        printf "  Binary:    %s\n" "$BINARY_PATH"
+        printf "  Binary:       %s\n" "$BINARY_PATH"
         HAVE_BINARY=true
     else
-        printf "  Binary:    ${YELLOW}not found${NC}\n"
+        printf "  Binary:       ${YELLOW}not found${NC}\n"
         HAVE_BINARY=false
+    fi
+    
+    # Shell config
+    if [ -n "$SHELL_CONFIG_FILE" ] && [ -f "$SHELL_CONFIG_FILE" ] && \
+       grep -q "# Added by revoco installer" "$SHELL_CONFIG_FILE" 2>/dev/null; then
+        printf "  Shell config: %s\n" "$SHELL_CONFIG_FILE"
+        HAVE_SHELL_CONFIG=true
+    else
+        printf "  Shell config: ${YELLOW}not found${NC}\n"
+        HAVE_SHELL_CONFIG=false
     fi
     
     # Config
     if [ -d "$CONFIG_DIR" ]; then
         config_size=$(dir_size "$CONFIG_DIR")
-        printf "  Config:    %s (%s)\n" "$CONFIG_DIR" "$config_size"
+        printf "  Config:       %s (%s)\n" "$CONFIG_DIR" "$config_size"
         HAVE_CONFIG=true
     else
-        printf "  Config:    ${YELLOW}not found${NC}\n"
+        printf "  Config:       ${YELLOW}not found${NC}\n"
         HAVE_CONFIG=false
     fi
     
@@ -250,10 +313,10 @@ Example:
     if [ -d "$PLUGINS_DIR" ]; then
         plugins_count=$(file_count "$PLUGINS_DIR")
         plugins_size=$(dir_size "$PLUGINS_DIR")
-        printf "  Plugins:   %s (%s files, %s)\n" "$PLUGINS_DIR" "$plugins_count" "$plugins_size"
+        printf "  Plugins:      %s (%s files, %s)\n" "$PLUGINS_DIR" "$plugins_count" "$plugins_size"
         HAVE_PLUGINS=true
     else
-        printf "  Plugins:   ${YELLOW}not found${NC}\n"
+        printf "  Plugins:      ${YELLOW}not found${NC}\n"
         HAVE_PLUGINS=false
     fi
     
@@ -261,33 +324,35 @@ Example:
     if [ -d "$SESSIONS_DIR" ]; then
         sessions_count=$(ls -1 "$SESSIONS_DIR" 2>/dev/null | wc -l | tr -d ' ')
         sessions_size=$(dir_size "$SESSIONS_DIR")
-        printf "  Sessions:  %s (%s sessions, %s)\n" "$SESSIONS_DIR" "$sessions_count" "$sessions_size"
+        printf "  Sessions:     %s (%s sessions, %s)\n" "$SESSIONS_DIR" "$sessions_count" "$sessions_size"
         HAVE_SESSIONS=true
     else
-        printf "  Sessions:  ${YELLOW}not found${NC}\n"
+        printf "  Sessions:     ${YELLOW}not found${NC}\n"
         HAVE_SESSIONS=false
     fi
     
     # Cache
     if [ -d "$CACHE_DIR" ]; then
         cache_size=$(dir_size "$CACHE_DIR")
-        printf "  Cache:     %s (%s)\n" "$CACHE_DIR" "$cache_size"
+        printf "  Cache:        %s (%s)\n" "$CACHE_DIR" "$cache_size"
         HAVE_CACHE=true
     else
-        printf "  Cache:     ${YELLOW}not found${NC}\n"
+        printf "  Cache:        ${YELLOW}not found${NC}\n"
         HAVE_CACHE=false
     fi
     
     echo ""
     
     # Check if anything to remove
-    if [ "$HAVE_BINARY" = false ] && [ "$HAVE_CONFIG" = false ] && [ "$HAVE_SESSIONS" = false ] && [ "$HAVE_CACHE" = false ]; then
+    if [ "$HAVE_BINARY" = false ] && [ "$HAVE_SHELL_CONFIG" = false ] && \
+       [ "$HAVE_CONFIG" = false ] && [ "$HAVE_SESSIONS" = false ] && [ "$HAVE_CACHE" = false ]; then
         success "Nothing to uninstall - revoco is not installed"
         exit 0
     fi
     
     # Track what to remove
     REMOVE_BINARY=false
+    REMOVE_SHELL_CONFIG=false
     REMOVE_CONFIG=false
     REMOVE_PLUGINS=false
     REMOVE_SESSIONS=false
@@ -296,6 +361,7 @@ Example:
     # Ask about each component
     if [ "$SKIP_PROMPTS" = true ]; then
         REMOVE_BINARY=$HAVE_BINARY
+        REMOVE_SHELL_CONFIG=$HAVE_SHELL_CONFIG
         REMOVE_CONFIG=$HAVE_CONFIG
         REMOVE_PLUGINS=$HAVE_PLUGINS
         REMOVE_SESSIONS=$HAVE_SESSIONS
@@ -308,6 +374,13 @@ Example:
         if [ "$HAVE_BINARY" = true ]; then
             if ask "Remove revoco binary?" "y"; then
                 REMOVE_BINARY=true
+            fi
+        fi
+        
+        # Shell config
+        if [ "$HAVE_SHELL_CONFIG" = true ]; then
+            if ask "Remove PATH configuration from $SHELL_CONFIG_FILE?" "y"; then
+                REMOVE_SHELL_CONFIG=true
             fi
         fi
         
@@ -349,14 +422,15 @@ Example:
     # Summary of what will be removed
     echo "Will remove:"
     [ "$REMOVE_BINARY" = true ] && echo "  - Binary: $BINARY_PATH"
+    [ "$REMOVE_SHELL_CONFIG" = true ] && echo "  - Shell config: PATH entry in $SHELL_CONFIG_FILE"
     [ "$REMOVE_CONFIG" = true ] && echo "  - Config files"
     [ "$REMOVE_PLUGINS" = true ] && echo "  - Plugins"
     [ "$REMOVE_SESSIONS" = true ] && printf "  - ${RED}Sessions (DATA WILL BE LOST)${NC}\n"
     [ "$REMOVE_CACHE" = true ] && echo "  - Cache"
     
-    if [ "$REMOVE_BINARY" = false ] && [ "$REMOVE_CONFIG" = false ] && \
-       [ "$REMOVE_PLUGINS" = false ] && [ "$REMOVE_SESSIONS" = false ] && \
-       [ "$REMOVE_CACHE" = false ]; then
+    if [ "$REMOVE_BINARY" = false ] && [ "$REMOVE_SHELL_CONFIG" = false ] && \
+       [ "$REMOVE_CONFIG" = false ] && [ "$REMOVE_PLUGINS" = false ] && \
+       [ "$REMOVE_SESSIONS" = false ] && [ "$REMOVE_CACHE" = false ]; then
         info "Nothing selected for removal"
         exit 0
     fi
@@ -384,6 +458,17 @@ Example:
             success "Removed binary: $BINARY_PATH"
         else
             warn "Failed to remove binary: $BINARY_PATH (may need sudo)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+    
+    # Remove shell config PATH entry
+    if [ "$REMOVE_SHELL_CONFIG" = true ]; then
+        if remove_path_config "$SHELL_CONFIG_FILE"; then
+            success "Removed PATH config from: $SHELL_CONFIG_FILE"
+            info "Restart your terminal for changes to take effect"
+        else
+            warn "Failed to remove PATH config from: $SHELL_CONFIG_FILE"
             ERRORS=$((ERRORS + 1))
         fi
     fi
@@ -455,6 +540,7 @@ Example:
     echo ""
     REMAINING=""
     [ "$HAVE_BINARY" = true ] && [ "$REMOVE_BINARY" = false ] && REMAINING="$REMAINING binary"
+    [ "$HAVE_SHELL_CONFIG" = true ] && [ "$REMOVE_SHELL_CONFIG" = false ] && REMAINING="$REMAINING shell-config"
     [ "$HAVE_CONFIG" = true ] && [ "$REMOVE_CONFIG" = false ] && REMAINING="$REMAINING config"
     [ "$HAVE_PLUGINS" = true ] && [ "$REMOVE_PLUGINS" = false ] && REMAINING="$REMAINING plugins"
     [ "$HAVE_SESSIONS" = true ] && [ "$REMOVE_SESSIONS" = false ] && REMAINING="$REMAINING sessions"

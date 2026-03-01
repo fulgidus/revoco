@@ -102,6 +102,67 @@ verify_checksum() {
     success "Checksum verified"
 }
 
+# Configure PATH in shell config
+# Sets SHELL_CONFIG_FILE variable if successful
+configure_path() {
+    install_dir="$1"
+    SHELL_CONFIG_FILE=""
+    
+    # Detect shell and config file
+    case "$SHELL" in
+        */bash)
+            if [ "$(uname -s)" = "Darwin" ]; then
+                SHELL_CONFIG_FILE="$HOME/.bash_profile"
+            else
+                SHELL_CONFIG_FILE="$HOME/.bashrc"
+            fi
+            PATH_LINE="export PATH=\"\$PATH:${install_dir}\""
+            ;;
+        */zsh)
+            SHELL_CONFIG_FILE="$HOME/.zshrc"
+            PATH_LINE="export PATH=\"\$PATH:${install_dir}\""
+            ;;
+        */fish)
+            SHELL_CONFIG_FILE="$HOME/.config/fish/config.fish"
+            PATH_LINE="fish_add_path ${install_dir}"
+            ;;
+        *)
+            # Unknown shell - show manual instructions
+            warn "Unknown shell: $SHELL"
+            echo ""
+            echo "Add this to your shell profile:"
+            echo "  export PATH=\"\$PATH:${install_dir}\""
+            echo ""
+            return 1
+            ;;
+    esac
+    
+    # Create config file if it doesn't exist
+    if [ ! -f "$SHELL_CONFIG_FILE" ]; then
+        mkdir -p "$(dirname "$SHELL_CONFIG_FILE")"
+        touch "$SHELL_CONFIG_FILE"
+    fi
+    
+    # Check if markers already exist (skip if so)
+    if grep -q "# Added by revoco installer" "$SHELL_CONFIG_FILE" 2>/dev/null; then
+        info "PATH already configured in $SHELL_CONFIG_FILE"
+        return 0
+    fi
+    
+    # Append PATH config with markers
+    {
+        echo ""
+        echo "# Added by revoco installer"
+        echo "$PATH_LINE"
+        echo "# End revoco"
+    } >> "$SHELL_CONFIG_FILE"
+    
+    success "Added ${install_dir} to PATH in $SHELL_CONFIG_FILE"
+    info "Restart your terminal or run: source $SHELL_CONFIG_FILE"
+    
+    return 0
+}
+
 # Main installation
 main() {
     info "revoco installer"
@@ -200,38 +261,42 @@ main() {
     
     success "Installed ${BINARY} to ${INSTALL_DIR}"
     
-    # Record installation info for uninstaller
+    # Record installation info for uninstaller (shell_config_file added after PATH config)
     CONFIG_DIR="$HOME/.config/revoco"
     mkdir -p "$CONFIG_DIR"
+    
+    # Configure PATH if not already in PATH
+    SHELL_CONFIG_FILE=""
+    case ":$PATH:" in
+        *":${INSTALL_DIR}:"*) 
+            info "${INSTALL_DIR} is already in PATH"
+            ;;
+        *)
+            echo ""
+            configure_path "$INSTALL_DIR" || true
+            ;;
+    esac
+    
+    # Write install.json with shell config info
     INSTALL_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
-    cat > "${CONFIG_DIR}/install.json" << EOF
+    if [ -n "$SHELL_CONFIG_FILE" ]; then
+        cat > "${CONFIG_DIR}/install.json" << EOF
+{
+  "binary_path": "${INSTALL_DIR}/${BINARY}",
+  "version": "${VERSION}",
+  "installed_at": "${INSTALL_TIME}",
+  "shell_config_file": "${SHELL_CONFIG_FILE}"
+}
+EOF
+    else
+        cat > "${CONFIG_DIR}/install.json" << EOF
 {
   "binary_path": "${INSTALL_DIR}/${BINARY}",
   "version": "${VERSION}",
   "installed_at": "${INSTALL_TIME}"
 }
 EOF
-    
-    # Check if install dir is in PATH
-    case ":$PATH:" in
-        *":${INSTALL_DIR}:"*) ;;
-        *)
-            echo ""
-            warn "${INSTALL_DIR} is not in your PATH"
-            echo ""
-            echo "Add it to your shell profile:"
-            echo ""
-            echo "  # For bash (~/.bashrc or ~/.bash_profile):"
-            echo "  export PATH=\"\$PATH:${INSTALL_DIR}\""
-            echo ""
-            echo "  # For zsh (~/.zshrc):"
-            echo "  export PATH=\"\$PATH:${INSTALL_DIR}\""
-            echo ""
-            echo "  # For fish (~/.config/fish/config.fish):"
-            echo "  fish_add_path ${INSTALL_DIR}"
-            echo ""
-            ;;
-    esac
+    fi
     
     # Verify installation
     echo ""
