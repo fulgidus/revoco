@@ -279,8 +279,15 @@ func (m RetrieveModel) startRetrieval() tea.Cmd {
 				default:
 				}
 
-				// Determine destination path
-				destPath := filepath.Join(dataDir, cs.config.InstanceID, item.ID)
+				// Determine destination path - use item.Path for proper filename/structure
+				// item.Path contains the relative path with folder structure and proper filename
+				// item.ID is just an identifier (e.g., Google Drive file ID) which isn't a valid filename
+				itemPath := item.Path
+				if itemPath == "" {
+					// Fallback to ID if Path is empty (shouldn't happen but be safe)
+					itemPath = item.ID
+				}
+				destPath := filepath.Join(dataDir, cs.config.InstanceID, itemPath)
 
 				// Read the item to destination
 				if err := reader.ReadTo(ctx, item, destPath, cs.config.ImportMode); err != nil {

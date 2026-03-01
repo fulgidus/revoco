@@ -193,7 +193,12 @@ func (m RepairModel) startRepair() tea.Cmd {
 				default:
 				}
 
-				destPath := filepath.Join(recoveredDir, item.ID)
+				// Use item's original path for proper filename, fallback to ID if empty
+				itemPath := item.Path
+				if itemPath == "" {
+					itemPath = item.ID
+				}
+				destPath := filepath.Join(recoveredDir, itemPath)
 
 				if isRepairer {
 					// Use dedicated repair method
