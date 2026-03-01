@@ -53,7 +53,7 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
     files:
-      - README.md
+      - source.url
       - LICENSE*
 
 checksum:
