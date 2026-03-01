@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fulgidus/revoco/plugins"
-	// Import lua package to register the Lua plugin factory
-	_ "github.com/fulgidus/revoco/plugins/lua"
 )
 
 var (
@@ -41,15 +39,7 @@ var pluginsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all installed plugins",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		// Initialize plugins
-		if err := plugins.InitializePlugins(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: some plugins failed to load: %v\n", err)
-		}
-		defer plugins.ShutdownPlugins()
-
+		// Plugin system is already initialized by PersistentPreRunE
 		manager := plugins.PluginManager()
 		if manager == nil {
 			return fmt.Errorf("plugin system not initialized")
@@ -113,14 +103,7 @@ var pluginsInfoCmd = &cobra.Command{
 	Short: "Show detailed information about a plugin",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := plugins.InitializePlugins(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: some plugins failed to load: %v\n", err)
-		}
-		defer plugins.ShutdownPlugins()
-
+		// Plugin system is already initialized by PersistentPreRunE
 		manager := plugins.PluginManager()
 		if manager == nil {
 			return fmt.Errorf("plugin system not initialized")
@@ -205,14 +188,7 @@ var pluginsCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check plugin dependencies",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := plugins.InitializePlugins(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: some plugins failed to load: %v\n", err)
-		}
-		defer plugins.ShutdownPlugins()
-
+		// Plugin system is already initialized by PersistentPreRunE
 		manager := plugins.PluginManager()
 		if manager == nil {
 			return fmt.Errorf("plugin system not initialized")
@@ -270,11 +246,7 @@ var pluginsReloadCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if err := plugins.InitializePlugins(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: some plugins failed to load: %v\n", err)
-		}
-		defer plugins.ShutdownPlugins()
-
+		// Plugin system is already initialized by PersistentPreRunE
 		manager := plugins.PluginManager()
 		if manager == nil {
 			return fmt.Errorf("plugin system not initialized")

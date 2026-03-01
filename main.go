@@ -7,10 +7,14 @@ import (
 	"github.com/charmbracelet/bubbletea"
 
 	"github.com/fulgidus/revoco/cmd"
+	"github.com/fulgidus/revoco/plugins"
 	"github.com/fulgidus/revoco/tui"
 )
 
 func main() {
+	// Ensure plugins are cleaned up on exit
+	defer plugins.ShutdownPlugins()
+
 	// Set version info for CLI
 	cmd.SetVersionInfo(VersionInfo, FullVersionInfo)
 
