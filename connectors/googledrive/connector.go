@@ -428,7 +428,7 @@ func (c *Connector) GetOAuth() *OAuth2Client {
 
 // List retrieves all files from Google Drive.
 func (c *Connector) List(ctx context.Context, progress core.ProgressFunc) ([]core.DataItem, error) {
-	// Build query
+	// Build query - we need folders too for path resolution
 	var queryParts []string
 
 	// Exclude trashed files by default
@@ -438,13 +438,14 @@ func (c *Connector) List(ctx context.Context, progress core.ProgressFunc) ([]cor
 	}
 
 	// Optionally filter to a specific folder
+	rootFolderID := ""
 	if folderID, ok := c.cfg.Settings["folder_id"].(string); ok && folderID != "" {
-		queryParts = append(queryParts, fmt.Sprintf("'%s' in parents", folderID))
+		rootFolderID = folderID
 	}
 
 	query := strings.Join(queryParts, " and ")
 
-	// Paginate through all files
+	// Phase 1: Fetch ALL files and folders in one pass
 	var allFiles []DriveFile
 	pageToken := ""
 
@@ -472,7 +473,15 @@ func (c *Connector) List(ctx context.Context, progress core.ProgressFunc) ([]cor
 		pageToken = fileList.NextPageToken
 	}
 
-	// Convert to DataItems
+	// Phase 2: Build folder map for local path resolution (no API calls)
+	folderMap := make(map[string]*DriveFile) // ID -> folder info
+	for i := range allFiles {
+		if IsFolder(allFiles[i].MimeType) {
+			folderMap[allFiles[i].ID] = &allFiles[i]
+		}
+	}
+
+	// Phase 3: Convert to DataItems with locally-resolved paths
 	items := make([]core.DataItem, 0, len(allFiles))
 	total := len(allFiles)
 
@@ -495,7 +504,7 @@ func (c *Connector) List(ctx context.Context, progress core.ProgressFunc) ([]cor
 			continue
 		}
 
-		item := c.driveFileToDataItem(ctx, &file)
+		item := c.driveFileToDataItemFast(&file, folderMap, rootFolderID)
 		items = append(items, item)
 
 		if progress != nil {
@@ -506,7 +515,112 @@ func (c *Connector) List(ctx context.Context, progress core.ProgressFunc) ([]cor
 	return items, nil
 }
 
+// driveFileToDataItemFast converts a DriveFile to a core.DataItem using a local folder map.
+// This avoids API calls by resolving folder paths from pre-fetched folder data.
+func (c *Connector) driveFileToDataItemFast(file *DriveFile, folderMap map[string]*DriveFile, rootFolderID string) core.DataItem {
+	// Build folder path locally without API calls
+	var folderPath string
+	if len(file.Parents) > 0 {
+		folderPath = c.buildFolderPathLocal(file.Parents[0], folderMap, rootFolderID)
+	}
+
+	// Determine file name and extension for Google Workspace docs
+	fileName := file.Name
+	if IsGoogleWorkspaceDoc(file.MimeType) {
+		ext := c.exportFmt[file.MimeType]
+		if ext == "" {
+			if fmt := GetDefaultExportFormat(file.MimeType); fmt != nil {
+				ext = fmt.Extension
+			}
+		}
+		// Only add extension if not already present
+		if ext != "" && !strings.HasSuffix(strings.ToLower(fileName), strings.ToLower(ext)) {
+			fileName = fileName + ext
+		}
+	}
+
+	// Build relative path
+	relativePath := fileName
+	if folderPath != "" {
+		relativePath = folderPath + "/" + fileName
+	}
+
+	item := core.DataItem{
+		ID:           file.ID,
+		Type:         detectDataTypeFromMime(file.MimeType),
+		Path:         relativePath, // Relative path in Drive
+		RemoteID:     file.ID,
+		SourceConnID: c.cfg.InstanceID,
+		Size:         file.Size,
+		Checksum:     file.MD5Checksum,
+		Metadata: map[string]any{
+			"name":             file.Name,
+			"mime_type":        file.MimeType,
+			"created_time":     file.CreatedTime.Unix(),
+			"modified_time":    file.ModifiedTime.Unix(),
+			"web_view_link":    file.WebViewLink,
+			"folder_path":      folderPath,
+			"is_google_doc":    IsGoogleWorkspaceDoc(file.MimeType),
+			"google_doc_type":  GetDocumentType(file.MimeType),
+			"export_extension": c.exportFmt[file.MimeType],
+		},
+	}
+
+	// Add owner info if available
+	if len(file.Owners) > 0 {
+		item.Metadata["owner_email"] = file.Owners[0].EmailAddress
+		item.Metadata["owner_name"] = file.Owners[0].DisplayName
+	}
+
+	return item
+}
+
+// buildFolderPathLocal builds folder path using pre-fetched folder data (no API calls).
+func (c *Connector) buildFolderPathLocal(folderID string, folderMap map[string]*DriveFile, rootFolderID string) string {
+	// Check cache first
+	if path, ok := c.pathCache[folderID]; ok {
+		return path
+	}
+
+	// Stop if we've reached the root folder
+	if rootFolderID != "" && folderID == rootFolderID {
+		return ""
+	}
+
+	folder, ok := folderMap[folderID]
+	if !ok {
+		// Folder not in our map (might be root or shared folder)
+		// Return empty to avoid partial paths
+		return ""
+	}
+
+	// If no parents, this is a root-level folder
+	if len(folder.Parents) == 0 {
+		c.pathCache[folderID] = folder.Name
+		return folder.Name
+	}
+
+	// Stop if parent is the root folder we're filtering to
+	if rootFolderID != "" && len(folder.Parents) > 0 && folder.Parents[0] == rootFolderID {
+		c.pathCache[folderID] = folder.Name
+		return folder.Name
+	}
+
+	// Recursively build parent path
+	parentPath := c.buildFolderPathLocal(folder.Parents[0], folderMap, rootFolderID)
+	var fullPath string
+	if parentPath != "" {
+		fullPath = parentPath + "/" + folder.Name
+	} else {
+		fullPath = folder.Name
+	}
+
+	c.pathCache[folderID] = fullPath
+	return fullPath
+}
+
 // driveFileToDataItem converts a DriveFile to a core.DataItem.
+// Deprecated: Use driveFileToDataItemFast for better performance.
 func (c *Connector) driveFileToDataItem(ctx context.Context, file *DriveFile) core.DataItem {
 	// Get folder path for organizing output
 	var folderPath string
