@@ -1068,7 +1068,8 @@ func runConnectorTest(cfg core.ConnectorConfig) addConnTestMsg {
 	}
 
 	// Run the test with a timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use 120s since OAuth flows require user interaction in browser
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	err := tester.TestConnection(ctx, cfg)
