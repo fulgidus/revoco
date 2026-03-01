@@ -103,13 +103,6 @@
 | Navidrome | [ ] | [ ] | [ ] | planned |
 | Jellyfin | [ ] | [ ] | [ ] | planned |
 
-### Video
-| Service | Import | Export | Metadata | Status |
-|---------|:------:|:------:|:--------:|--------|
-| YouTube | [ ] | [ ] | [ ] | planned |
-| Vimeo | [ ] | [ ] | [ ] | planned |
-| Twitch | [ ] | [ ] | [ ] | planned |
-
 ---
 
 ## Email Connectors
@@ -125,17 +118,6 @@
 | Outlook/Hotmail | [ ] | [ ] | [ ] | planned |
 | iCloud Mail | [ ] | [ ] | [ ] | planned |
 | Yahoo Mail | [ ] | [ ] | [ ] | planned |
-
-### Protocols
-| Protocol | Input | Output | Status |
-|----------|:-----:|:------:|--------|
-| IMAP | [ ] | [ ] | planned |
-| POP3 | [ ] | - | planned |
-| SMTP relay | - | [ ] | planned |
-| JMAP | [ ] | [ ] | planned |
-| mbox format | [ ] | [ ] | planned |
-| EML files | [ ] | [ ] | planned |
-| Maildir | [ ] | [ ] | planned |
 
 ---
 
@@ -158,11 +140,7 @@
 | Apple Numbers (iCloud) | [ ] | [ ] | [ ] | [ ] | planned |
 | Apple Keynote (iCloud) | [ ] | [ ] | [ ] | [ ] | planned |
 | Dropbox Paper | [ ] | [ ] | [ ] | [ ] | planned |
-| Zoho Docs | [ ] | [ ] | [ ] | [ ] | planned |
 | Notion | [ ] | [ ] | [ ] | [ ] | planned |
-| Coda | [ ] | [ ] | [ ] | [ ] | planned |
-| Airtable | [ ] | [ ] | [ ] | [ ] | planned |
-| Quip | [ ] | [ ] | [ ] | [ ] | planned |
 
 ### Export Formats (per document type)
 
@@ -193,6 +171,7 @@
 
 **Diagrams/Drawings:**
 - [ ] SVG
+- [ ] Mermaid
 - [ ] PNG
 - [ ] PDF
 
@@ -204,7 +183,6 @@
 - [ ] Batch export (entire Drive/folder)
 - [ ] Incremental sync (changed docs only)
 - [ ] Automatic format conversion on change
-- [ ] Scheduled backup to local/NAS
 
 ### Self-Hosted Alternatives (Output Targets)
 | Service | Documents | Spreadsheets | Presentations | Status |
@@ -217,7 +195,7 @@
 
 ---
 
-## Social & Messaging
+## Social & Messaging (download only, for safekeeping)
 
 ### Social Networks
 | Service | Posts | Media | Contacts | Status |
@@ -261,6 +239,7 @@
 | Service | Import | Export | Status |
 |---------|:------:|:------:|--------|
 | Google Calendar | [ ] | [ ] | planned |
+| Proton Calendar | [ ] | [ ] | planned |
 | iCloud Calendar | [ ] | [ ] | planned |
 | Outlook Calendar | [ ] | [ ] | planned |
 | CalDAV | [ ] | [ ] | planned |
@@ -270,6 +249,7 @@
 | Service | Import | Export | Status |
 |---------|:------:|:------:|--------|
 | Google Keep | [ ] | [ ] | planned |
+| Proton Notes | [ ] | [ ] | planned |
 | Apple Notes | [ ] | [ ] | planned |
 | Notion | [ ] | [ ] | planned |
 | Evernote | [ ] | [ ] | planned |
@@ -364,6 +344,7 @@
 | GitLab | [ ] | [ ] | planned |
 | Bitbucket | [ ] | [ ] | planned |
 | Gists/Snippets | [ ] | [ ] | planned |
+| Codeberg | [ ] | [ ] | planned |
 
 ---
 
