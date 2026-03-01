@@ -2,8 +2,12 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbletea"
+	"fmt"
+	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/fulgidus/revoco/cmd"
 	"github.com/fulgidus/revoco/session"
 )
 
@@ -20,6 +24,7 @@ const (
 	ScreenAnalyze                       // statistics and analysis
 	ScreenRepair                        // fallback-based repair
 	ScreenPush                          // output to destinations
+	ScreenUpdateConfirm                 // update confirmation dialog
 )
 
 // App is the top-level Bubble Tea model that hosts all screens.
@@ -34,11 +39,18 @@ type App struct {
 	analyze         AnalyzeModel
 	repair          RepairModel
 	push            PushModel
+	updateConfirm   UpdateConfirmModel
 	width           int
 	height          int
 
 	// activeSession is set when a session is opened from the session list.
 	activeSession *session.Session
+
+	// updateState tracks update availability
+	updateState UpdateState
+
+	// previousScreen stores the screen to return to after update confirm
+	previousScreen Screen
 }
 
 // NewApp creates the TUI application starting on the Sessions screen.
@@ -46,12 +58,19 @@ func NewApp() App {
 	return App{
 		screen:   ScreenSessions,
 		sessions: NewSessionsModel(),
+		updateState: UpdateState{
+			Checking: true, // Will start checking on Init
+		},
 	}
 }
 
 // Init implements tea.Model.
 func (a App) Init() tea.Cmd {
-	return a.sessions.Init()
+	// Start update check in background along with session init
+	return tea.Batch(
+		a.sessions.Init(),
+		CheckForUpdatesCmd(),
+	)
 }
 
 // Update implements tea.Model.
@@ -65,14 +84,93 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SwitchScreenMsg:
 		return a.switchScreen(msg)
 
+	case UpdateCheckMsg:
+		return a.handleUpdateCheck(msg)
+
+	case SelfUpdateCompleteMsg:
+		return a.handleSelfUpdateComplete(msg)
+
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
 		}
+
+		// Handle 'u' key for self-update (only on main screens, not during update confirm)
+		if msg.String() == "u" && a.updateState.RevocoUpdateAvailable != "" && a.screen != ScreenUpdateConfirm {
+			return a.showUpdateConfirm()
+		}
+	}
+
+	// Handle update confirmation screen specially
+	if a.screen == ScreenUpdateConfirm {
+		return a.handleUpdateConfirmUpdate(msg)
 	}
 
 	// Delegate to active screen
 	return a.delegateMsg(msg)
+}
+
+// handleUpdateCheck processes the update check result.
+func (a App) handleUpdateCheck(msg UpdateCheckMsg) (tea.Model, tea.Cmd) {
+	a.updateState.Checking = false
+	a.updateState.RevocoUpdateAvailable = msg.RevocoUpdate
+	a.updateState.PluginUpdatesAvailable = msg.PluginUpdates
+	a.updateState.CheckError = msg.Error
+	return a, nil
+}
+
+// handleSelfUpdateComplete processes the self-update result.
+func (a App) handleSelfUpdateComplete(msg SelfUpdateCompleteMsg) (tea.Model, tea.Cmd) {
+	a.updateState.Updating = false
+	a.updateState.UpdateStage = ""
+	a.updateState.UpdateProgress = 0
+
+	if msg.Success {
+		// Update completed - show message and quit so user can restart
+		return a, tea.Quit
+	}
+
+	// Update failed - return to previous screen
+	a.screen = a.previousScreen
+	return a, nil
+}
+
+// showUpdateConfirm switches to the update confirmation screen.
+func (a App) showUpdateConfirm() (tea.Model, tea.Cmd) {
+	a.previousScreen = a.screen
+	a.screen = ScreenUpdateConfirm
+	a.updateConfirm = NewUpdateConfirmModel(
+		strings.TrimPrefix(cmd.GetVersion(), "v"),
+		a.updateState.RevocoUpdateAvailable,
+	)
+	return a, a.updateConfirm.Init()
+}
+
+// handleUpdateConfirmUpdate handles updates while on the confirmation screen.
+func (a App) handleUpdateConfirmUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m, cmd := a.updateConfirm.Update(msg)
+	a.updateConfirm = m.(UpdateConfirmModel)
+
+	if a.updateConfirm.IsConfirmed() {
+		// User confirmed - start the update
+		// For now, we'll just print a message and return to previous screen
+		// A full implementation would run the update in the background
+		a.screen = a.previousScreen
+		a.updateState.Updating = true
+		a.updateState.UpdateStage = "preparing"
+		// TODO: Actually run the self-update command
+		// For now, just return to previous screen with a note
+		a.updateState.Updating = false
+		return a, nil
+	}
+
+	if a.updateConfirm.IsCancelled() {
+		// User cancelled - return to previous screen
+		a.screen = a.previousScreen
+		return a, nil
+	}
+
+	return a, cmd
 }
 
 // propagateSize sends a WindowSizeMsg to the active screen.
@@ -113,6 +211,10 @@ func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	case ScreenPush:
 		m, cmd := a.push.Update(msg)
 		a.push = m.(PushModel)
+		return a, cmd
+	case ScreenUpdateConfirm:
+		m, cmd := a.updateConfirm.Update(msg)
+		a.updateConfirm = m.(UpdateConfirmModel)
 		return a, cmd
 	}
 	return a, nil
@@ -163,28 +265,52 @@ func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (a App) View() string {
+	// Build header with update status
+	header := a.buildHeader()
+
+	// Build main content
+	var content string
 	switch a.screen {
 	case ScreenSessions:
-		return a.sessions.View()
+		content = a.sessions.View()
 	case ScreenDashboard:
-		return a.dashboard.View()
+		content = a.dashboard.View()
 	case ScreenAddConnector:
-		return a.addConnector.View()
+		content = a.addConnector.View()
 	case ScreenConfigConnector:
-		return a.configConnector.View()
+		content = a.configConnector.View()
 	case ScreenRetrieve:
-		return a.retrieve.View()
+		content = a.retrieve.View()
 	case ScreenProcess:
-		return a.process.View()
+		content = a.process.View()
 	case ScreenAnalyze:
-		return a.analyze.View()
+		content = a.analyze.View()
 	case ScreenRepair:
-		return a.repair.View()
+		content = a.repair.View()
 	case ScreenPush:
-		return a.push.View()
+		content = a.push.View()
+	case ScreenUpdateConfirm:
+		content = a.updateConfirm.View()
 	default:
-		return a.sessions.View()
+		content = a.sessions.View()
 	}
+
+	// Combine header and content
+	if header != "" {
+		return header + "\n" + content
+	}
+	return content
+}
+
+// buildHeader builds the header line with version and update status.
+func (a App) buildHeader() string {
+	version := cmd.GetVersion()
+	badge := a.updateState.UpdateBadge()
+
+	if badge != "" {
+		return fmt.Sprintf("revoco v%s  %s", strings.TrimPrefix(version, "v"), badge)
+	}
+	return ""
 }
 
 // SwitchScreenMsg is sent to navigate between screens.
