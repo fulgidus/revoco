@@ -368,10 +368,17 @@ func (c *Connector) Initialize(ctx context.Context, cfg core.ConnectorConfig) er
 	clientID := cfg.Settings["client_id"].(string)
 	clientSecret := cfg.Settings["client_secret"].(string)
 
-	// Determine token directory (use credential ID if available)
+	// Determine token directory - use user's home directory for persistence
+	// Tokens in /tmp would be lost on reboot
 	tokenDir := ""
-	if cfg.CredentialID != "" {
-		tokenDir = filepath.Join(os.TempDir(), "revoco", "tokens", cfg.CredentialID)
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		if cfg.CredentialID != "" {
+			tokenDir = filepath.Join(homeDir, ".revoco", "tokens", cfg.CredentialID)
+		} else {
+			// Fallback: use connector instance ID if no credential ID
+			tokenDir = filepath.Join(homeDir, ".revoco", "tokens", "google-drive-"+cfg.InstanceID)
+		}
 	}
 
 	// Create OAuth client
