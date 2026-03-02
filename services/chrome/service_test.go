@@ -199,8 +199,8 @@ func TestChromeService_DefaultConfig(t *testing.T) {
 
 func TestChromeService_FullIntegration(t *testing.T) {
 	// Verify complete service pipeline
-	svc, _ := core.GetService("chrome")
-	if svc == nil {
+	svc, ok := core.GetService("chrome")
+	if !ok {
 		t.Fatal("chrome service not found in registry")
 	}
 
@@ -225,8 +225,9 @@ func TestChromeService_FullIntegration(t *testing.T) {
 		if outID == "local-folder" {
 			continue // Built-in output
 		}
-		out, _ := core.GetOutput(outID)
-		if out == nil {
+		out, ok := core.GetOutput(outID)
+		if !ok {
+		_ = out // silence unused warning
 			t.Errorf("declared output %q not found in registry", outID)
 		}
 	}

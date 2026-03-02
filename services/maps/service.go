@@ -13,11 +13,19 @@ import (
 const ServiceID = "maps"
 
 // Service handles Google Maps Takeout data.
-type Service struct{}
+type Service struct {
+	ingesters  []core.Ingester
+	processors []core.Processor
+}
 
 // New creates a new Google Maps service instance.
 func New() *Service {
-	return &Service{}
+	return &Service{
+		ingesters: ingesters.NewMapsIngesters(),
+		processors: []core.Processor{
+			processors.NewMapsProcessor(),
+		},
+	}
 }
 
 // ID returns the unique identifier for this service.
@@ -32,31 +40,37 @@ func (s *Service) Name() string {
 
 // Description returns a brief description of what this service handles.
 func (s *Service) Description() string {
-	return "Google Maps Takeout processor - location history and saved places"
+	return "Process Google Maps Takeout - location history, saved places, and timeline data"
 }
 
 // Ingesters returns all available ingestion modules for this service.
 func (s *Service) Ingesters() []core.Ingester {
-	return ingesters.NewMapsIngesters()
+	return s.ingesters
 }
 
 // Processors returns all available processors for this service.
 func (s *Service) Processors() []core.Processor {
-	return []core.Processor{processors.NewMapsProcessor()}
+	return s.processors
 }
 
 // SupportedOutputs returns the IDs of compatible output modules.
 func (s *Service) SupportedOutputs() []string {
-	return []string{"local-folder"}
+	return []string{
+		"local-folder",
+		"maps-geojson",
+		"maps-kml",
+		"maps-json",
+		"maps-csv",
+	}
 }
 
 // DefaultConfig returns the default configuration for this service.
 func (s *Service) DefaultConfig() core.ServiceConfig {
 	return core.ServiceConfig{
 		Settings: map[string]any{
-			"include_location_history": true,
-			"include_saved_places":     true,
-			"include_timeline":         true,
+			"coordinate_precision": 6,
+			"include_timeline":     true,
+			"min_accuracy":         0,
 		},
 	}
 }
