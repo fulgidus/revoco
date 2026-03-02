@@ -6,6 +6,7 @@ import (
 	// Import services to trigger their init() registration
 	_ "github.com/fulgidus/revoco/services/googlephotos"
 	_ "github.com/fulgidus/revoco/services/youtubemusic"
+	_ "github.com/fulgidus/revoco/services/gmail"
 
 	// Import common outputs to trigger their init() registration
 	_ "github.com/fulgidus/revoco/outputs/common"
