@@ -1,0 +1,33 @@
+# Git repository
+.git/
+.gitignore
+
+# Distribution artifacts
+dist/
+
+# Bundled tools (Docker uses Alpine packages instead)
+internal/bundled/bin/
+
+# Task tracking and session management
+.sisyphus/
+
+# CI/CD and IDE
+.github/
+.vscode/
+
+# Documentation (keep LICENSE)
+*.md
+!LICENSE
+
+# Cache directories
+.ruff_cache/
+.golangci.yml
+
+# Legacy and examples (optional, reduce context)
+legacy/
+examples/
+
+# Build artifacts
+*.o
+*.a
+*.so

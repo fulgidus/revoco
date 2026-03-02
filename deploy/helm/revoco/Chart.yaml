@@ -1,0 +1,16 @@
+apiVersion: v2
+name: revoco
+description: Data liberation tool for escaping big tech walled gardens
+type: application
+version: 0.1.0
+appVersion: "0.1.7"  # Placeholder, updated per release
+home: https://github.com/fulgidus/revoco
+sources:
+  - https://github.com/fulgidus/revoco
+maintainers:
+  - name: fulgidus
+    url: https://github.com/fulgidus
+keywords:
+  - data-liberation
+  - google-takeout
+  - photos
