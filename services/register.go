@@ -14,6 +14,7 @@ import (
 	_ "github.com/fulgidus/revoco/services/tasks"
 	_ "github.com/fulgidus/revoco/services/maps"
 	_ "github.com/fulgidus/revoco/services/fit"
+	_ "github.com/fulgidus/revoco/services/passwords"
 
 	// Import common outputs to trigger their init() registration
 	_ "github.com/fulgidus/revoco/outputs/common"
