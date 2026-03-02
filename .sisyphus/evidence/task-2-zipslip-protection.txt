@@ -1,0 +1,4 @@
+=== RUN   TestZipIngester_ZipSlip
+--- PASS: TestZipIngester_ZipSlip (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/core/ingesters	0.005s

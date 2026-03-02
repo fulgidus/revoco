@@ -1,0 +1,141 @@
+=== YouTube Music Processor Tests - Evidence Report ===
+Date: Mon Mar  2 03:54:55 CET 2026
+Branch: feature/google-exodus
+
+## Build Test
+✓ Build successful
+
+## Unit Tests
+=== RUN   TestMusicProcessor_Metadata
+--- PASS: TestMusicProcessor_Metadata (0.00s)
+=== RUN   TestMusicProcessor_ConfigSchema
+--- PASS: TestMusicProcessor_ConfigSchema (0.00s)
+=== RUN   TestMusicProcessor_Process_Full
+--- PASS: TestMusicProcessor_Process_Full (0.00s)
+=== RUN   TestMusicProcessor_Process_SelectivePhases
+--- PASS: TestMusicProcessor_Process_SelectivePhases (0.00s)
+=== RUN   TestMusicProcessor_Process_Empty
+--- PASS: TestMusicProcessor_Process_Empty (0.00s)
+=== RUN   TestMusicProcessor_Process_Malformed
+    processor_test.go:395: Malformed processing stats: map[liked_songs:0 playlist_tracks:1 playlists:2 subscriptions:0 uploads:0]
+    processor_test.go:405: Log output:
+        2026/03/02 03:54:43 === YouTube Music processing started (source=/tmp/TestMusicProcessor_Process_Malformed721510688/001/takeout) ===
+        2026/03/02 03:54:43 [Phase 1] playlists=2 tracks=1
+        2026/03/02 03:54:43 [Phase 2] liked_songs=0
+        2026/03/02 03:54:43 [Phase 3] uploads=0
+        2026/03/02 03:54:43 [Phase 4] subscriptions=0
+        2026/03/02 03:54:43 [Phase 5] Skipped - no local library path
+        2026/03/02 03:54:43 [Phase 6] Wrote library.json
+        2026/03/02 03:54:43 === YouTube Music processing complete ===
+--- PASS: TestMusicProcessor_Process_Malformed (0.00s)
+=== RUN   TestMusicProcessor_Process_Cancellation
+    processor_test.go:438: Partial result: map[liked_songs:2 playlist_tracks:0 playlists:0 subscriptions:2 uploads:2]
+--- PASS: TestMusicProcessor_Process_Cancellation (0.00s)
+=== RUN   TestMusicProcessor_ScanPlaylists
+--- PASS: TestMusicProcessor_ScanPlaylists (0.00s)
+=== RUN   TestMusicProcessor_ScanLikedSongs
+--- PASS: TestMusicProcessor_ScanLikedSongs (0.00s)
+=== RUN   TestMusicProcessor_ScanUploads
+--- PASS: TestMusicProcessor_ScanUploads (0.00s)
+=== RUN   TestMusicProcessor_ScanSubscriptions
+--- PASS: TestMusicProcessor_ScanSubscriptions (0.00s)
+=== RUN   TestMusicProcessor_MatchLocalLibrary
+    processor_test.go:623: Matched track 'Never Gonna Give You Up' to local file: /tmp/TestMusicProcessor_MatchLocalLibrary491900678/001/music-library/never gonna give you up.mp3
+    processor_test.go:623: Matched track 'Gangnam Style' to local file: /tmp/TestMusicProcessor_MatchLocalLibrary491900678/001/music-library/gangnam style.flac
+--- PASS: TestMusicProcessor_MatchLocalLibrary (0.00s)
+=== RUN   TestMusicProcessor_BuildProcessedItems
+--- PASS: TestMusicProcessor_BuildProcessedItems (0.00s)
+=== RUN   TestDetectYouTubeMusicDir
+=== RUN   TestDetectYouTubeMusicDir/exact_match
+    processor_test.go:717: Detected: /tmp/TestDetectYouTubeMusicDirexact_match4124489250/001/YouTube and YouTube Music
+=== RUN   TestDetectYouTubeMusicDir/case_insensitive
+    processor_test.go:717: Detected: /tmp/TestDetectYouTubeMusicDircase_insensitive3424983870/001/youtube and youtube music
+=== RUN   TestDetectYouTubeMusicDir/Italian_variant
+    processor_test.go:717: Detected: /tmp/TestDetectYouTubeMusicDirItalian_variant3524356128/001/YouTube e YouTube Music
+=== RUN   TestDetectYouTubeMusicDir/nested
+    processor_test.go:717: Detected: /tmp/TestDetectYouTubeMusicDirnested2362969426/001/Takeout/YouTube and YouTube Music
+=== RUN   TestDetectYouTubeMusicDir/wrong_name
+--- PASS: TestDetectYouTubeMusicDir (0.00s)
+    --- PASS: TestDetectYouTubeMusicDir/exact_match (0.00s)
+    --- PASS: TestDetectYouTubeMusicDir/case_insensitive (0.00s)
+    --- PASS: TestDetectYouTubeMusicDir/Italian_variant (0.00s)
+    --- PASS: TestDetectYouTubeMusicDir/nested (0.00s)
+    --- PASS: TestDetectYouTubeMusicDir/wrong_name (0.00s)
+=== RUN   TestIsAudioExt
+=== RUN   TestIsAudioExt/.mp3
+=== RUN   TestIsAudioExt/.flac
+=== RUN   TestIsAudioExt/.m4a
+=== RUN   TestIsAudioExt/.wav
+=== RUN   TestIsAudioExt/.ogg
+=== RUN   TestIsAudioExt/.opus
+=== RUN   TestIsAudioExt/.aac
+=== RUN   TestIsAudioExt/.wma
+=== RUN   TestIsAudioExt/.txt
+=== RUN   TestIsAudioExt/.jpg
+=== RUN   TestIsAudioExt/.json
+=== RUN   TestIsAudioExt/#00
+--- PASS: TestIsAudioExt (0.00s)
+    --- PASS: TestIsAudioExt/.mp3 (0.00s)
+    --- PASS: TestIsAudioExt/.flac (0.00s)
+    --- PASS: TestIsAudioExt/.m4a (0.00s)
+    --- PASS: TestIsAudioExt/.wav (0.00s)
+    --- PASS: TestIsAudioExt/.ogg (0.00s)
+    --- PASS: TestIsAudioExt/.opus (0.00s)
+    --- PASS: TestIsAudioExt/.aac (0.00s)
+    --- PASS: TestIsAudioExt/.wma (0.00s)
+    --- PASS: TestIsAudioExt/.txt (0.00s)
+    --- PASS: TestIsAudioExt/.jpg (0.00s)
+    --- PASS: TestIsAudioExt/.json (0.00s)
+    --- PASS: TestIsAudioExt/#00 (0.00s)
+=== RUN   TestGetBool
+=== RUN   TestGetBool/enabled
+=== RUN   TestGetBool/disabled
+=== RUN   TestGetBool/missing
+=== RUN   TestGetBool/missing#01
+=== RUN   TestGetBool/string
+=== RUN   TestGetBool/number
+--- PASS: TestGetBool (0.00s)
+    --- PASS: TestGetBool/enabled (0.00s)
+    --- PASS: TestGetBool/disabled (0.00s)
+    --- PASS: TestGetBool/missing (0.00s)
+    --- PASS: TestGetBool/missing#01 (0.00s)
+    --- PASS: TestGetBool/string (0.00s)
+    --- PASS: TestGetBool/number (0.00s)
+=== RUN   TestGetString
+=== RUN   TestGetString/name
+=== RUN   TestGetString/empty
+=== RUN   TestGetString/missing
+=== RUN   TestGetString/number
+=== RUN   TestGetString/bool
+--- PASS: TestGetString (0.00s)
+    --- PASS: TestGetString/name (0.00s)
+    --- PASS: TestGetString/empty (0.00s)
+    --- PASS: TestGetString/missing (0.00s)
+    --- PASS: TestGetString/number (0.00s)
+    --- PASS: TestGetString/bool (0.00s)
+=== RUN   TestFindLocalMatch
+=== RUN   TestFindLocalMatch/Never_Gonna_Give_You_Up
+=== RUN   TestFindLocalMatch/Gangnam_Style
+=== RUN   TestFindLocalMatch/Track_Title
+=== RUN   TestFindLocalMatch/Partial_Match_Here
+=== RUN   TestFindLocalMatch/Unknown_Song_That_Doesn't_Exist
+=== RUN   TestFindLocalMatch/never_gonna_give_you_up
+=== RUN   TestFindLocalMatch/Track_Title#01
+=== RUN   TestFindLocalMatch/somewhere
+--- PASS: TestFindLocalMatch (0.00s)
+    --- PASS: TestFindLocalMatch/Never_Gonna_Give_You_Up (0.00s)
+    --- PASS: TestFindLocalMatch/Gangnam_Style (0.00s)
+    --- PASS: TestFindLocalMatch/Track_Title (0.00s)
+    --- PASS: TestFindLocalMatch/Partial_Match_Here (0.00s)
+    --- PASS: TestFindLocalMatch/Unknown_Song_That_Doesn't_Exist (0.00s)
+    --- PASS: TestFindLocalMatch/never_gonna_give_you_up (0.00s)
+    --- PASS: TestFindLocalMatch/Track_Title#01 (0.00s)
+    --- PASS: TestFindLocalMatch/somewhere (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/youtubemusic/processors	(cached)
+
+## Test Coverage
+ok  	github.com/fulgidus/revoco/services/youtubemusic/processors	0.010s	coverage: 86.8% of statements
+
+## Test Summary
+Total test actions: 55
