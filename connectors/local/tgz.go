@@ -905,14 +905,9 @@ func (c *MultiTgzConnector) TestConnection(ctx context.Context, cfg core.Connect
 	return nil
 }
 
-func init() {
-	core.RegisterConnector(func() core.Connector {
-		return NewTgzConnector()
-	})
-	core.RegisterConnector(func() core.Connector {
-		return NewMultiTgzConnector()
-	})
-}
+// init() registration removed — local-tgz and local-multi-tgz are now provided by Lua plugins
+// plugins/defaults/connectors/local-tgz.lua
+// plugins/defaults/connectors/local-multi-tgz.lua
 
 // Ensure interfaces are satisfied
 var (

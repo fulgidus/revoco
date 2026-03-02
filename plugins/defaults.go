@@ -24,7 +24,7 @@ const markerFileName = ".defaults-extracted"
 
 // DefaultPluginsVersion is the version of the default plugins bundle.
 // Increment this when default plugins are updated to trigger re-extraction.
-const DefaultPluginsVersion = "1"
+const DefaultPluginsVersion = "2"
 
 // ExtractDefaultPlugins extracts bundled default plugins to the user's plugin directory.
 // It only extracts if this is the first run (marker file doesn't exist) or if

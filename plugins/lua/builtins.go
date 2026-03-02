@@ -1,6 +1,9 @@
 package lua
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -14,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -32,6 +36,8 @@ func (r *Runtime) loaderRevoco(L *lua.LState) int {
 	registerLogModule(L, mod)
 	registerExecModule(L, mod)
 	registerHTTPModule(L, mod)
+	registerZipModule(L, mod)
+	registerTarModule(L, mod)
 
 	L.Push(mod)
 	return 1
@@ -54,6 +60,10 @@ func registerFileModule(L *lua.LState, mod *lua.LTable) {
 	mod.RawSetString("move", L.NewFunction(luaMove))
 	mod.RawSetString("remove", L.NewFunction(luaRemove))
 	mod.RawSetString("tempfile", L.NewFunction(luaTempfile))
+	mod.RawSetString("symlink", L.NewFunction(luaSymlink))
+	mod.RawSetString("stat", L.NewFunction(luaStat))
+	mod.RawSetString("walk", L.NewFunction(luaWalk))
+	mod.RawSetString("listDir", L.NewFunction(luaListDir))
 
 	// Path functions
 	mod.RawSetString("join", L.NewFunction(luaPathJoin))
@@ -923,5 +933,489 @@ func luaHTTPRequest(L *lua.LState) int {
 	result.RawSetString("headers", respHeaders)
 
 	L.Push(result)
+	return 1
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Extended File Functions (symlink, stat, walk, listDir)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// luaSymlink creates a symbolic link: symlink(target, linkName) -> bool, err
+func luaSymlink(L *lua.LState) int {
+	target := L.CheckString(1)
+	linkName := L.CheckString(2)
+
+	if err := os.Symlink(target, linkName); err != nil {
+		L.Push(lua.LFalse)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	L.Push(lua.LTrue)
+	return 1
+}
+
+// luaStat returns file metadata: stat(path) -> {name, size, mod_time, mode, is_dir}, err
+func luaStat(L *lua.LState) int {
+	path := L.CheckString(1)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	tbl := L.NewTable()
+	tbl.RawSetString("name", lua.LString(info.Name()))
+	tbl.RawSetString("size", lua.LNumber(info.Size()))
+	tbl.RawSetString("mod_time", lua.LNumber(info.ModTime().Unix()))
+	tbl.RawSetString("mode", lua.LString(info.Mode().String()))
+	tbl.RawSetString("is_dir", lua.LBool(info.IsDir()))
+
+	L.Push(tbl)
+	return 1
+}
+
+// luaWalk recursively lists all files in a directory: walk(dir) -> [{path, name, size, mod_time, is_dir}, ...], err
+func luaWalk(L *lua.LState) int {
+	dir := L.CheckString(1)
+
+	results := L.NewTable()
+	idx := 1
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip errors, keep walking
+		}
+
+		entry := L.NewTable()
+		entry.RawSetString("path", lua.LString(path))
+		entry.RawSetString("name", lua.LString(info.Name()))
+		entry.RawSetString("size", lua.LNumber(info.Size()))
+		entry.RawSetString("mod_time", lua.LNumber(info.ModTime().Unix()))
+		entry.RawSetString("is_dir", lua.LBool(info.IsDir()))
+
+		results.RawSetInt(idx, entry)
+		idx++
+		return nil
+	})
+
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	L.Push(results)
+	return 1
+}
+
+// luaListDir lists entries in a directory (non-recursive): listDir(path) -> [{name, size, mod_time, is_dir}, ...], err
+func luaListDir(L *lua.LState) int {
+	dir := L.CheckString(1)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	results := L.NewTable()
+	for i, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		tbl := L.NewTable()
+		tbl.RawSetString("name", lua.LString(entry.Name()))
+		tbl.RawSetString("size", lua.LNumber(info.Size()))
+		tbl.RawSetString("mod_time", lua.LNumber(info.ModTime().Unix()))
+		tbl.RawSetString("is_dir", lua.LBool(entry.IsDir()))
+
+		results.RawSetInt(i+1, tbl)
+	}
+
+	L.Push(results)
+	return 1
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ZIP Module (revoco.zip.*)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// zipRegistry holds open ZIP readers mapped by handle ID.
+// This avoids passing Go pointers into Lua space.
+var (
+	zipMu      sync.Mutex
+	zipHandles = map[int]*zip.ReadCloser{}
+	zipNextID  = 1
+)
+
+func registerZipModule(L *lua.LState, mod *lua.LTable) {
+	zipMod := L.NewTable()
+	zipMod.RawSetString("open", L.NewFunction(luaZipOpen))
+	zipMod.RawSetString("list", L.NewFunction(luaZipList))
+	zipMod.RawSetString("read", L.NewFunction(luaZipRead))
+	zipMod.RawSetString("extract", L.NewFunction(luaZipExtract))
+	zipMod.RawSetString("close", L.NewFunction(luaZipClose))
+	mod.RawSetString("zip", zipMod)
+}
+
+// luaZipOpen opens a ZIP file and returns a numeric handle: zip.open(path) -> handle, err
+func luaZipOpen(L *lua.LState) int {
+	path := L.CheckString(1)
+
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	zipMu.Lock()
+	handle := zipNextID
+	zipNextID++
+	zipHandles[handle] = r
+	zipMu.Unlock()
+
+	L.Push(lua.LNumber(handle))
+	return 1
+}
+
+// luaZipList lists files in an open ZIP: zip.list(handle) -> [{name, size, compressed_size, mod_time, is_dir}, ...], err
+func luaZipList(L *lua.LState) int {
+	handle := L.CheckInt(1)
+
+	zipMu.Lock()
+	r, ok := zipHandles[handle]
+	zipMu.Unlock()
+
+	if !ok {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("invalid zip handle"))
+		return 2
+	}
+
+	results := L.NewTable()
+	for i, f := range r.File {
+		entry := L.NewTable()
+		entry.RawSetString("name", lua.LString(f.Name))
+		entry.RawSetString("size", lua.LNumber(f.UncompressedSize64))
+		entry.RawSetString("compressed_size", lua.LNumber(f.CompressedSize64))
+		entry.RawSetString("mod_time", lua.LNumber(f.Modified.Unix()))
+		entry.RawSetString("is_dir", lua.LBool(f.FileInfo().IsDir()))
+
+		results.RawSetInt(i+1, entry)
+	}
+
+	L.Push(results)
+	return 1
+}
+
+// luaZipRead reads a file from an open ZIP into a string: zip.read(handle, name) -> content, err
+// WARNING: loads entire file into memory. For large files, use zip.extract instead.
+func luaZipRead(L *lua.LState) int {
+	handle := L.CheckInt(1)
+	name := L.CheckString(2)
+
+	zipMu.Lock()
+	r, ok := zipHandles[handle]
+	zipMu.Unlock()
+
+	if !ok {
+		L.Push(lua.LNil)
+		L.Push(lua.LString("invalid zip handle"))
+		return 2
+	}
+
+	// Find the file
+	for _, f := range r.File {
+		if f.Name == name {
+			rc, err := f.Open()
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			defer rc.Close()
+
+			content, err := io.ReadAll(rc)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+			L.Push(lua.LString(content))
+			return 1
+		}
+	}
+
+	L.Push(lua.LNil)
+	L.Push(lua.LString(fmt.Sprintf("file not found in zip: %s", name)))
+	return 2
+}
+
+// luaZipExtract extracts a file from an open ZIP to disk: zip.extract(handle, name, destPath) -> bool, err
+// This operates at the Go level so large files never pass through Lua memory.
+func luaZipExtract(L *lua.LState) int {
+	handle := L.CheckInt(1)
+	name := L.CheckString(2)
+	destPath := L.CheckString(3)
+
+	zipMu.Lock()
+	r, ok := zipHandles[handle]
+	zipMu.Unlock()
+
+	if !ok {
+		L.Push(lua.LFalse)
+		L.Push(lua.LString("invalid zip handle"))
+		return 2
+	}
+
+	// Find the file
+	for _, f := range r.File {
+		if f.Name != name {
+			continue
+		}
+
+		// If it's a directory, just create it
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(destPath, 0755); err != nil {
+				L.Push(lua.LFalse)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(lua.LTrue)
+			return 1
+		}
+
+		// Ensure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Open source in zip
+		rc, err := f.Open()
+		if err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		defer rc.Close()
+
+		// Create destination
+		dst, err := os.Create(destPath)
+		if err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		defer dst.Close()
+
+		// Stream copy (no Lua memory overhead)
+		if _, err := io.Copy(dst, rc); err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Preserve modification time
+		if !f.Modified.IsZero() {
+			_ = os.Chtimes(destPath, f.Modified, f.Modified)
+		}
+
+		L.Push(lua.LTrue)
+		return 1
+	}
+
+	L.Push(lua.LFalse)
+	L.Push(lua.LString(fmt.Sprintf("file not found in zip: %s", name)))
+	return 2
+}
+
+// luaZipClose closes an open ZIP handle: zip.close(handle) -> bool
+func luaZipClose(L *lua.LState) int {
+	handle := L.CheckInt(1)
+
+	zipMu.Lock()
+	r, ok := zipHandles[handle]
+	if ok {
+		delete(zipHandles, handle)
+	}
+	zipMu.Unlock()
+
+	if !ok {
+		L.Push(lua.LFalse)
+		return 1
+	}
+
+	r.Close()
+	L.Push(lua.LTrue)
+	return 1
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TAR Module (revoco.tar.*)
+// ══════════════════════════════════════════════════════════════════════════════
+
+func registerTarModule(L *lua.LState, mod *lua.LTable) {
+	tarMod := L.NewTable()
+	tarMod.RawSetString("list", L.NewFunction(luaTarList))
+	tarMod.RawSetString("extractAll", L.NewFunction(luaTarExtractAll))
+	mod.RawSetString("tar", tarMod)
+}
+
+// luaTarList lists entries in a .tar.gz without extracting: tar.list(path) -> [{name, size, mod_time, is_dir}, ...], err
+func luaTarList(L *lua.LState) int {
+	path := L.CheckString(1)
+
+	f, err := os.Open(path)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	results := L.NewTable()
+	idx := 1
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		entry := L.NewTable()
+		entry.RawSetString("name", lua.LString(hdr.Name))
+		entry.RawSetString("size", lua.LNumber(hdr.Size))
+		entry.RawSetString("mod_time", lua.LNumber(hdr.ModTime.Unix()))
+		entry.RawSetString("is_dir", lua.LBool(hdr.Typeflag == tar.TypeDir))
+
+		results.RawSetInt(idx, entry)
+		idx++
+	}
+
+	L.Push(results)
+	return 1
+}
+
+// luaTarExtractAll extracts all files from a .tar.gz: tar.extractAll(tgzPath, destDir) -> [{name, path, size, mod_time}, ...], err
+func luaTarExtractAll(L *lua.LState) int {
+	tgzPath := L.CheckString(1)
+	destDir := L.CheckString(2)
+
+	f, err := os.Open(tgzPath)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	results := L.NewTable()
+	idx := 1
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+
+		// Security: prevent path traversal
+		target := filepath.Join(destDir, hdr.Name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)+string(os.PathSeparator)) {
+			continue // skip entries that would escape destDir
+		}
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+		case tar.TypeReg:
+			// Ensure parent directory
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+			outFile, err := os.Create(target)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+
+			if _, err := io.Copy(outFile, tr); err != nil {
+				outFile.Close()
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			outFile.Close()
+
+			// Preserve modification time
+			if !hdr.ModTime.IsZero() {
+				_ = os.Chtimes(target, hdr.ModTime, hdr.ModTime)
+			}
+
+			entry := L.NewTable()
+			entry.RawSetString("name", lua.LString(hdr.Name))
+			entry.RawSetString("path", lua.LString(target))
+			entry.RawSetString("size", lua.LNumber(hdr.Size))
+			entry.RawSetString("mod_time", lua.LNumber(hdr.ModTime.Unix()))
+			results.RawSetInt(idx, entry)
+			idx++
+
+		case tar.TypeSymlink:
+			// Ensure parent directory
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				continue
+			}
+			_ = os.Remove(target) // remove if exists
+			_ = os.Symlink(hdr.Linkname, target)
+		}
+	}
+
+	L.Push(results)
 	return 1
 }

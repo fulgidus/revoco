@@ -628,14 +628,9 @@ func (c *MultiZipConnector) TestConnection(ctx context.Context, cfg core.Connect
 	return nil
 }
 
-func init() {
-	core.RegisterConnector(func() core.Connector {
-		return NewZipConnector()
-	})
-	core.RegisterConnector(func() core.Connector {
-		return NewMultiZipConnector()
-	})
-}
+// init() registration removed — local-zip and local-multi-zip are now provided by Lua plugins
+// plugins/defaults/connectors/local-zip.lua
+// plugins/defaults/connectors/local-multi-zip.lua
 
 // Ensure interfaces are satisfied
 var (
