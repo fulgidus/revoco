@@ -2,3 +2,7 @@
 --- PASS: TestZipIngester_ZipSlip (0.00s)
 PASS
 ok  	github.com/fulgidus/revoco/services/core/ingesters	0.005s
+=== RUN   TestTGZIngester_Ingest_PathTraversal
+--- PASS: TestTGZIngester_Ingest_PathTraversal (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/core/ingesters	0.003s
