@@ -1,0 +1,35 @@
+=== RUN   TestNewServiceIngesters
+--- PASS: TestNewServiceIngesters (0.00s)
+=== RUN   TestNewServiceFolderDetector
+--- PASS: TestNewServiceFolderDetector (0.00s)
+=== RUN   TestFolderIngester_CanIngest
+--- PASS: TestFolderIngester_CanIngest (0.00s)
+=== RUN   TestFolderIngester_Ingest
+--- PASS: TestFolderIngester_Ingest (0.00s)
+=== RUN   TestFolderIngester_Ingest_ContextCancellation
+--- PASS: TestFolderIngester_Ingest_ContextCancellation (0.00s)
+=== RUN   TestZipIngester_CanIngest
+--- PASS: TestZipIngester_CanIngest (0.00s)
+=== RUN   TestZipIngester_Ingest
+--- PASS: TestZipIngester_Ingest (0.00s)
+=== RUN   TestZipIngester_ZipSlip
+--- PASS: TestZipIngester_ZipSlip (0.00s)
+=== RUN   TestZipIngester_IngestMulti
+--- PASS: TestZipIngester_IngestMulti (0.00s)
+=== RUN   TestZipIngester_IngestMulti_ContextCancellation
+--- PASS: TestZipIngester_IngestMulti_ContextCancellation (0.00s)
+=== RUN   TestTGZIngester_CanIngest
+--- PASS: TestTGZIngester_CanIngest (0.00s)
+=== RUN   TestTGZIngester_Ingest
+--- PASS: TestTGZIngester_Ingest (0.00s)
+=== RUN   TestTGZIngester_Ingest_PathTraversal
+--- PASS: TestTGZIngester_Ingest_PathTraversal (0.00s)
+=== RUN   TestTGZIngester_IngestMulti
+--- PASS: TestTGZIngester_IngestMulti (0.00s)
+=== RUN   TestTGZIngester_IngestMulti_ContextCancellation
+--- PASS: TestTGZIngester_IngestMulti_ContextCancellation (0.00s)
+=== RUN   TestIntegration_RealWorldUsage
+    ingesters_test.go:639: Progress: 1/1
+--- PASS: TestIntegration_RealWorldUsage (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/core/ingesters	0.012s

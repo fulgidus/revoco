@@ -6,6 +6,15 @@ import (
 	// Import services to trigger their init() registration
 	_ "github.com/fulgidus/revoco/services/googlephotos"
 	_ "github.com/fulgidus/revoco/services/youtubemusic"
+	_ "github.com/fulgidus/revoco/services/gmail"
+	_ "github.com/fulgidus/revoco/services/keep"
+	_ "github.com/fulgidus/revoco/services/contacts"
+	_ "github.com/fulgidus/revoco/services/calendar"
+	_ "github.com/fulgidus/revoco/services/chrome"
+	_ "github.com/fulgidus/revoco/services/tasks"
+	_ "github.com/fulgidus/revoco/services/maps"
+	_ "github.com/fulgidus/revoco/services/fit"
+	_ "github.com/fulgidus/revoco/services/passwords"
 
 	// Import common outputs to trigger their init() registration
 	_ "github.com/fulgidus/revoco/outputs/common"
