@@ -15,9 +15,8 @@ import (
 	core "github.com/fulgidus/revoco/connectors"
 	"github.com/fulgidus/revoco/session"
 
-	// Import local connectors to trigger registration
+	// Import Google Drive connector to trigger registration (local connectors are now Lua plugins)
 	_ "github.com/fulgidus/revoco/connectors/googledrive"
-	_ "github.com/fulgidus/revoco/connectors/local"
 )
 
 var (
@@ -29,6 +28,7 @@ var (
 	flagConnectorID       string
 	flagImportDest        string
 	flagImportMode        string
+	flagConnectorTimeout  int // timeout in seconds for test/auth commands
 )
 
 // connectorCmd is the parent command for connector operations.
@@ -446,9 +446,19 @@ var connectorTestCmd = &cobra.Command{
 			return fmt.Errorf("connector %q does not support connection testing", cfg.ConnectorID)
 		}
 
-		fmt.Printf("Testing connector %q (%s)...\n", cfg.Name, cfg.ConnectorID)
+		// Print OAuth-aware messaging
+		info, _ := core.GetConnectorInfo(cfg.ConnectorID)
+		if info != nil && info.RequiresAuth && info.AuthType == "oauth2" {
+			fmt.Printf("Testing connector %q (%s)...\n", cfg.Name, cfg.ConnectorID)
+			fmt.Println("This connector requires OAuth authentication.")
+			fmt.Println("Check your browser for the authentication prompt...")
+			fmt.Printf("(Timeout: %ds — use --timeout to change)\n", flagConnectorTimeout)
+		} else {
+			fmt.Printf("Testing connector %q (%s)...\n", cfg.Name, cfg.ConnectorID)
+		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		timeout := time.Duration(flagConnectorTimeout) * time.Second
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		if err := tester.TestConnection(ctx, cfg); err != nil {
@@ -457,6 +467,84 @@ var connectorTestCmd = &cobra.Command{
 		}
 
 		fmt.Println("SUCCESS: Connection test passed")
+		return nil
+	},
+}
+
+// connectorAuthCmd authenticates with an OAuth-based connector.
+var connectorAuthCmd = &cobra.Command{
+	Use:   "auth",
+	Short: "Authenticate with an OAuth-based connector",
+	Long: `Trigger the OAuth authentication flow for a connector that requires it.
+
+This opens your browser for authentication and waits for the callback.
+Use --timeout to allow more time for completing the browser flow (default: 300s).
+
+Examples:
+  # Authenticate a Google Drive connector
+  revoco connector auth --session mydata --id abc123
+
+  # With a longer timeout
+  revoco connector auth --session mydata --id abc123 --timeout 600
+`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if flagConnectorSession == "" {
+			return fmt.Errorf("--session is required")
+		}
+		if flagConnectorID == "" {
+			return fmt.Errorf("--id is required")
+		}
+
+		s, err := session.Load(flagConnectorSession)
+		if err != nil {
+			return fmt.Errorf("load session: %w", err)
+		}
+
+		cfg, ok := s.GetConnector(flagConnectorID)
+		if !ok {
+			return fmt.Errorf("connector %q not found in session", flagConnectorID)
+		}
+
+		// Verify this connector requires OAuth
+		info, _ := core.GetConnectorInfo(cfg.ConnectorID)
+		if info == nil {
+			return fmt.Errorf("unknown connector type: %s", cfg.ConnectorID)
+		}
+		if !info.RequiresAuth || info.AuthType != "oauth2" {
+			return fmt.Errorf("connector %q (%s) does not use OAuth authentication", cfg.Name, cfg.ConnectorID)
+		}
+
+		// Create connector instance
+		connector, err := core.CreateConnector(cfg.ConnectorID)
+		if err != nil {
+			return fmt.Errorf("create connector: %w", err)
+		}
+
+		// Must support testing (TestConnection triggers the OAuth flow)
+		tester, ok := connector.(core.ConnectorTester)
+		if !ok {
+			return fmt.Errorf("connector %q does not support authentication testing", cfg.ConnectorID)
+		}
+
+		// Use auth-specific timeout (default 300s, much longer than test)
+		timeout := flagConnectorTimeout
+		if !cmd.Flags().Changed("timeout") {
+			timeout = 300 // default for auth is 5 minutes
+		}
+
+		fmt.Printf("Authenticating connector %q (%s)...\n", cfg.Name, cfg.ConnectorID)
+		fmt.Println("Opening your browser for OAuth authentication...")
+		fmt.Printf("You have %ds to complete the flow. Use --timeout to adjust.\n", timeout)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+
+		if err := tester.TestConnection(ctx, cfg); err != nil {
+			fmt.Printf("FAILED: %v\n", err)
+			return err
+		}
+
+		fmt.Println("SUCCESS: Authentication completed")
 		return nil
 	},
 }
@@ -633,6 +721,12 @@ func init() {
 	connectorEnableCmd.Flags().StringVar(&flagConnectorID, "id", "", "Connector instance ID (required)")
 	connectorDisableCmd.Flags().StringVar(&flagConnectorID, "id", "", "Connector instance ID (required)")
 	connectorTestCmd.Flags().StringVar(&flagConnectorID, "id", "", "Connector instance ID (required)")
+	connectorTestCmd.Flags().IntVar(&flagConnectorTimeout, "timeout", 120, "Timeout in seconds (default: 120)")
+
+	// Auth command flags
+	connectorAuthCmd.Flags().StringVar(&flagConnectorID, "id", "", "Connector instance ID (required)")
+	connectorAuthCmd.Flags().IntVar(&flagConnectorTimeout, "timeout", 300, "Timeout in seconds (default: 300)")
+	connectorAuthCmd.Flags().StringVar(&flagConnectorSession, "session", "", "Session name")
 
 	// Import flags
 	connectorImportCmd.Flags().StringVar(&flagImportDest, "dest", "", "Destination directory (default: session data dir)")
@@ -648,6 +742,7 @@ func init() {
 	connectorCmd.AddCommand(connectorEnableCmd)
 	connectorCmd.AddCommand(connectorDisableCmd)
 	connectorCmd.AddCommand(connectorTestCmd)
+	connectorCmd.AddCommand(connectorAuthCmd)
 	connectorCmd.AddCommand(connectorImportCmd)
 
 	// Add to root

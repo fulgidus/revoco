@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	core "github.com/fulgidus/revoco/connectors"
-	_ "github.com/fulgidus/revoco/connectors/local" // Register local connectors
 	"github.com/fulgidus/revoco/session"
 )
 

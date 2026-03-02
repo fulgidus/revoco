@@ -529,12 +529,8 @@ func (c *FolderConnector) TestConnection(ctx context.Context, cfg core.Connector
 	return nil
 }
 
-func init() {
-	// Auto-register with global registry
-	core.RegisterConnector(func() core.Connector {
-		return NewFolderConnector()
-	})
-}
+// init() registration removed — local-folder is now provided by the Lua plugin
+// plugins/defaults/connectors/local-folder.lua
 
 // Ensure FolderConnector implements both Reader and Writer interfaces
 var (
