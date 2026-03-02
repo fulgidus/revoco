@@ -52,11 +52,78 @@ Track import/export operations with versioned schemas, connector configurations,
 curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash
 ```
 
-### From GitHub Releases
+### macOS (Homebrew)
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/fulgidus/revoco/releases).
+```sh
+brew tap fulgidus/revoco && brew install revoco
+```
 
-### Build from Source
+### Linux
+
+#### Homebrew
+
+```sh
+brew tap fulgidus/revoco && brew install revoco
+```
+
+#### Debian / Ubuntu (apt)
+
+Download the `.deb` package from [GitHub Releases](https://github.com/fulgidus/revoco/releases).
+
+```sh
+sudo dpkg -i revoco_*.deb
+```
+
+#### Fedora / RHEL (dnf)
+
+Download the `.rpm` package from [GitHub Releases](https://github.com/fulgidus/revoco/releases).
+
+```sh
+sudo rpm -i revoco_*.rpm
+```
+
+#### Arch Linux (AUR)
+
+```sh
+yay -S revoco-bin  # or paru -S revoco-bin
+```
+
+### Windows
+
+#### Scoop
+
+```sh
+scoop bucket add revoco https://github.com/fulgidus/scoop-revoco && scoop install revoco
+```
+
+#### Chocolatey
+
+```sh
+choco install revoco
+```
+
+#### Winget
+
+```sh
+winget install fulgidus.revoco
+```
+
+### Container (Docker)
+
+```sh
+docker pull ghcr.io/fulgidus/revoco:latest
+docker run -it --rm -v "$(pwd):/data" ghcr.io/fulgidus/revoco:latest
+```
+
+### From Source
+
+#### Go Install
+
+```sh
+go install github.com/fulgidus/revoco@latest
+```
+
+#### Build Manual
 
 ```sh
 # Requires Go 1.23+
