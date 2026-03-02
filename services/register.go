@@ -10,6 +10,7 @@ import (
 	_ "github.com/fulgidus/revoco/services/keep"
 	_ "github.com/fulgidus/revoco/services/contacts"
 	_ "github.com/fulgidus/revoco/services/calendar"
+	_ "github.com/fulgidus/revoco/services/chrome"
 	_ "github.com/fulgidus/revoco/services/tasks"
 
 	// Import common outputs to trigger their init() registration

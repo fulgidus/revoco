@@ -611,3 +611,298 @@ Tasks 9-11 ready to start:
 - Task 11: Chrome Takeout processor
 
 Pattern established, shared ingesters working perfectly, ready for Wave 3 parallelization.
+
+## Task 14: Google Photos Ingesters Migration (2026-03-02)
+
+### Pattern: Service Ingester Migration
+
+Successfully migrated Google Photos ingesters from 459-line service-specific implementation to 37-line wrapper using shared `services/core/ingesters`.
+
+**Key Implementation Details:**
+1. **Shared Factory Function**: `NewServiceIngesters(serviceID, detectionFunc)` creates all three ingesters (folder, zip, tgz) with consistent IDs
+2. **Folder Detection Abstraction**: `NewServiceFolderDetector(variants []string)` handles locale-specific folder names
+3. **Legacy Constructor Pattern**: Maintained old constructors (`NewFolder()`, `NewZip()`, `NewTGZ()`) that return elements from shared array for backward compatibility
+
+**Code Reduction:**
+- Before: 459 lines with duplicated logic
+- After: 37 lines wrapper + shared implementation
+- Reduction: 91.9% (422 lines eliminated)
+
+**Testing Strategy:**
+- Test ingester IDs remain unchanged (critical for service registry)
+- Test `CanIngest()` behavior identical to old implementation
+- Test legacy constructors work correctly
+- Use `t.TempDir()` for filesystem tests
+
+**Backward Compatibility Maintained:**
+- Ingester IDs unchanged: `google-photos-folder`, `google-photos-zip`, `google-photos-tgz`
+- `service.go` continues to work without modification
+- All locale variants preserved (English, Italian, Spanish/Portuguese, Japanese)
+
+**Benefits:**
+- Centralized maintenance in `services/core/ingesters`
+- Future services can reuse pattern with just folder name variants
+- Eliminates code duplication across services
+- Single source of truth for archive handling logic
+
+
+## Task 15: YouTube Music Ingester Migration (2026-03-02)
+
+**Pattern: Second Service Migration (YouTube Music)**
+- Successfully replicated Task 14 pattern for YouTube Music service
+- Migrated from 307→39 lines (87.3% reduction, similar to Google Photos' 91.9%)
+- Migration took <1 minute following established pattern
+
+**Folder Name Variants Preserved:**
+```go
+[]string{
+    "YouTube Music",
+    "YouTube e YouTube Music",  // Italian
+    "YouTube and YouTube Music",
+}
+```
+
+**Key Findings:**
+- YouTube Music had 3 folder variants vs Google Photos' 4
+- Both services use identical ingester structure (folder/zip/tgz)
+- Legacy constructor pattern works identically across services
+- Test structure is fully reusable (only changed service names)
+
+**Code Reduction Consistency:**
+- Google Photos: 459→40 lines (91.9% reduction)
+- YouTube Music: 307→39 lines (87.3% reduction)
+- Both achieved ~90% code reduction
+
+**Testing Strategy Validated:**
+- 8 CanIngest test cases cover all ingester types and edge cases
+- Task 4 processor tests (18 tests) serve as safety net
+- No regressions detected in either ingester or processor behavior
+
+**Migration Checklist (Validated Twice):**
+1. ✅ Read current implementation to extract folder variants
+2. ✅ Copy reference implementation structure exactly
+3. ✅ Replace with thin wrapper using shared factories
+4. ✅ Create comprehensive tests (IDs, legacy constructors, CanIngest)
+5. ✅ Verify all existing tests still pass
+6. ✅ Verify build and vet clean
+
+**Pattern Confirmation:**
+- This is the SECOND successful application of the Task 14 pattern
+- Pattern is proven stable and reusable for other services
+- ~90% code reduction is consistent across services
+- Backward compatibility maintained in both migrations
+
+**Next Service Candidates:**
+- Any service with folder/zip/tgz ingesters can use this pattern
+- Estimate: 10-15 minutes per service migration
+- Risk: Very low (pattern proven twice)
+
+
+## [2026-03-02 16:45] Task 10: Google Maps Service
+
+**Status**: ✅ COMPLETE - Timeout work was actually complete and high-quality
+
+**Key Discovery**: Timeout "failure" actually produced COMPLETE, WORKING service
+- Session `ses_35300cae4ffeSg61mg4vH57aIW` timed out after 10 minutes
+- All 6 files were created before timeout
+- Code quality: Excellent (2,163 lines, 19 tests, all passing)
+- No fixes needed beyond verification
+
+**Quality Metrics**:
+- Lines: 2,163 (service: 72, ingesters: 24, metadata: 400+test 481, processor: 545, outputs: 642)
+- Tests: 19 (metadata coverage: comprehensive)
+- Build: ✅ Clean compilation
+- Vet: ✅ No issues
+- Tests: ✅ All passing
+- Pattern compliance: ✅ Shared ingesters, registration wiring, streaming JSON
+
+**Critical Patterns Verified**:
+1. E7 coordinate conversion: `convertE7(e7val int) float64` - divides by 1e7
+2. Streaming JSON: `json.NewDecoder(reader)` for 100MB+ files (NOT json.Unmarshal)
+3. Folder detection: 6 variants (English/Italian × 3 data types)
+4. Four output formats: GeoJSON (RFC 7946), KML (OGC 2.2), JSON, CSV
+5. Service registration: Both blank imports present and correct
+
+**Lesson**: "Timeout" doesn't mean "incomplete" - verify work before retrying
+- Subagent may have completed all core work before timeout
+- File creation timestamps show work finished, just didn't report back
+- Quality check caught this - saved full re-implementation
+
+**Commit**: 9dce52c - feat(services): add Google Maps Takeout processor
+
+---
+
+## [Task 9 - 2026-03-02] Google Tasks Processor
+
+**Completion Time**: ~30 minutes (with test fixes)
+
+### Service Implementation
+
+**Files Created** (7 total, 1,718 lines):
+- `services/tasks/service.go` (83 lines) — Service registration & interfaces
+- `services/tasks/service_test.go` (146 lines) — 9 service tests
+- `services/tasks/ingesters/ingesters.go` (56 lines) — Reuses shared ingesters
+- `services/tasks/metadata/types.go` (279 lines) — TaskList/Task types + 11 methods
+- `services/tasks/metadata/types_test.go` (388 lines) — 13 metadata tests
+- `services/tasks/processors/processor.go` (355 lines) — 4-phase processor
+- `services/tasks/outputs/outputs.go` (417 lines) — 3 outputs (JSON/Markdown/CSV)
+
+**Registration**: Added to `services/register.go` line 13
+
+### Google Tasks Takeout Format
+
+**JSON Structure**:
+```json
+{
+  "kind": "tasks#taskLists",
+  "items": [{
+    "kind": "tasks#taskList",
+    "id": "...",
+    "title": "My Tasks",
+    "updated": "2024-01-15T10:30:00.000Z",
+    "tasks": [
+      {
+        "id": "task1",
+        "title": "Buy groceries",
+        "notes": "Details here",
+        "status": "completed" | "needsAction",
+        "due": "2024-01-20T00:00:00.000Z",
+        "completed": "2024-01-15T10:30:00.000Z",
+        "parent": "parent_task_id",
+        "position": "00000000000000000001",
+        "links": [{"description": "...", "link": "...", "type": "email"}],
+        "deleted": false,
+        "updated": "2024-01-15T10:30:00.000Z"
+      }
+    ]
+  }]
+}
+```
+
+**Key Fields**:
+- `status`: "completed" or "needsAction" (not "pending")
+- `parent`: String ID for subtask hierarchy
+- `position`: Lexicographic ordering key
+- All timestamps: RFC3339 format
+- Links: Array with description/URL/type
+
+### Processor Pipeline (4 Phases)
+
+1. **Scan** (Phase 1): Find all .json files in Tasks/ directory
+2. **Parse** (Phase 2): Unmarshal JSON → TaskList structs
+3. **Hierarchy** (Phase 3): Build parent-child relationships, count stats
+4. **Summary** (Phase 4): Write tasks_summary.json, build ProcessedItems
+
+**Statistics Tracked**:
+- json_files, lists_parsed, parse_errors
+- total_tasks, completed_tasks, pending_tasks, deleted_tasks
+- tasks_with_due_dates, tasks_with_notes, tasks_with_links, subtasks
+
+### Output Formats
+
+**1. JSON Output** (`tasks-json`):
+- Preserves hierarchical structure (nested arrays)
+- Pretty-printed by default
+- One .json file per task list
+
+**2. Markdown Output** (`tasks-markdown`):
+- GitHub-flavored checkbox syntax: `- [x]` / `- [ ]`
+- Subtasks indented with 2 spaces
+- Includes due dates, notes, links inline
+- Filter options: include_completed, include_deleted
+
+**3. CSV Output** (`tasks-csv`):
+- Flat format (all tasks in single file)
+- Columns: list_name, task_title, status, due_date, completed_date, notes, parent_task, has_links, is_deleted
+- Parent field preserves hierarchy for external tools
+
+### Metadata Methods Pattern
+
+**11 Required Methods** (following Keep/Contacts pattern):
+```go
+// Task methods
+IsCompleted() bool
+HasDueDate() bool
+HasNotes() bool
+HasLinks() bool
+HasParent() bool
+FormatDueDate(layout) string
+FormatCompletedDate(layout) string
+GetCheckboxSymbol() string
+ToMarkdown(indent) string
+
+// TaskList methods
+CountCompleted() int
+CountPending() int
+BuildHierarchy() []Task  // Returns top-level tasks
+```
+
+### Test Coverage Achieved
+
+**Service Tests** (9 tests, all pass):
+- ID, Name, Description
+- Ingesters (3 returned: folder/zip/tgz)
+- Processors (1 returned: tasks-processor)
+- SupportedOutputs (4: local-folder + 3 custom)
+- DefaultConfig (empty settings map)
+- Registration (via core.GetService)
+- Output registration (via core.GetOutput)
+
+**Metadata Tests** (13 tests, all pass):
+- ParseTasksJSON (full JSON, empty list, no lists, malformed)
+- All 11 interface methods
+- Edge cases: zero dates, empty strings, nil slices
+
+### Gotchas & Fixes
+
+1. **GetService/GetOutput signature**: Returns `(value, bool)` NOT `(value, error)`
+   - Correct: `svc, ok := core.GetService("tasks")`
+   - Wrong: `svc, err := core.GetService("tasks")`
+
+2. **Status values**: Google uses "needsAction" not "pending"
+
+3. **Parent field**: String ID (not object reference) — requires map lookup for hierarchy reconstruction
+
+4. **Position field**: Lexicographic ordering key (string, not int)
+
+5. **Indentation in Markdown**: Use loop to build prefix string (not multiplication operator on strings)
+
+6. **CSV date formatting**: Empty string for zero dates (not "0001-01-01")
+
+### Patterns Followed (Wave 2 Consistency)
+
+✅ **7-file structure**: service.go + tests, ingesters/, metadata/, processors/, outputs/
+✅ **Shared ingesters**: `coreingesters.NewServiceIngesters("tasks", detectFunc)`
+✅ **Blank imports**: service.go imports outputs package
+✅ **Registration wiring**: Added to services/register.go line 13
+✅ **Empty DefaultConfig**: No service-specific settings (unlike Keep/Gmail)
+✅ **Context cancellation**: Checked in all loops
+✅ **Progress reporting**: 4 phases emitted
+✅ **Synthetic test fixtures**: Minimal JSON, no privacy concerns
+
+### Test Results
+
+```
+=== Service Tests (9/9 PASS) ===
+ok  	github.com/fulgidus/revoco/services/tasks	0.002s
+
+=== Metadata Tests (13/13 PASS) ===
+ok  	github.com/fulgidus/revoco/services/tasks/metadata	(cached)
+
+=== Build ===
+✅ go build ./services/tasks/... (SUCCESS)
+```
+
+**Total Lines**: 1,718 lines across 7 files
+**Test Count**: 22 tests (9 service + 13 metadata)
+**Pass Rate**: 100%
+
+### Insights for Future Services
+
+- **Empty DefaultConfig is valid**: Not all services need config settings
+- **BuildHierarchy() can be minimal**: Just return top-level tasks; Parent field preserves relationships
+- **RFC3339 is standard**: Use `time.Parse(time.RFC3339, str)` for all Takeout timestamps
+- **Markdown checkbox format**: `- [x]` for completed, `- [ ]` for pending (space required after checkbox)
+- **CSV is always batch-only**: Individual Export() is no-op, ExportBatch() creates single file
+- **Position as ordering key**: Google uses lexicographic strings (e.g., "00000000000000000001") not integers
+
