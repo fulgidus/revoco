@@ -1,5 +1,6 @@
-# Agent tracking file - never commit
-AGENT.md
+# Agent knowledge base - never commit
+AGENTS.md
+.sisyphus/
 
 # IDE
 .idea/
