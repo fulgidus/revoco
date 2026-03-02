@@ -906,3 +906,87 @@ ok  	github.com/fulgidus/revoco/services/tasks/metadata	(cached)
 - **CSV is always batch-only**: Individual Export() is no-op, ExportBatch() creates single file
 - **Position as ordering key**: Google uses lexicographic strings (e.g., "00000000000000000001") not integers
 
+
+## [Task 12] Google Fit Processor (2026-03-02)
+
+### What Was Done
+Implemented complete Google Fit Takeout processor service following established patterns from Gmail/Contacts/Calendar/Keep/Tasks/Maps/Chrome services (Wave 2-3). Created 7 files totaling ~1,643 lines:
+- `services/fit/metadata/types.go` (307 lines): CSV/JSON parsing with variable column handling
+- `services/fit/metadata/types_test.go` (349 lines): 20 comprehensive tests
+- `services/fit/ingesters/ingesters.go` (20 lines): Shared factory pattern
+- `services/fit/processors/processor.go` (395 lines): 4-phase processing pipeline
+- `services/fit/outputs/outputs.go` (328 lines): JSON and CSV (2 files) outputs
+- `services/fit/service.go` (83 lines): Service registration with pre-initialized struct fields
+- `services/fit/service_test.go` (181 lines): 10 service tests
+
+All 30 tests pass (10 service + 20 metadata). Build succeeds. Service and both outputs register correctly.
+
+### Technical Insights
+
+#### CSV Column Variability
+Google Fit daily aggregation CSVs have **variable columns** depending on what data the user tracked:
+- ALWAYS present: `Date`
+- OPTIONAL: `Move Minutes count`, `Calories (kcal)`, `Distance (m)`, `Heart Points`, `Heart Minutes`, `Step count`, `Average heart rate (bpm)`, plus 15+ other metrics
+- Solution: Read header row first, build column index map (`colMap[columnName] = index`), then use helper functions `parseCSVInt()` and `parseCSVFloat()` that return 0 if column missing
+- This graceful handling prevents panics when parsing CSVs from users who don't have heart rate monitors, cycling trackers, etc.
+
+#### Activity JSON Format
+Google Fit exports activity sessions as individual JSON files with structure:
+```json
+{
+  "startTime": "2024-01-15T10:30:00.000Z",
+  "endTime": "2024-01-15T11:00:00.000Z",
+  "activity": "WALKING",           // Enum-style uppercase
+  "fitnessActivity": "walking"     // Human-readable lowercase
+}
+```
+Both fields are optional. Parser uses RFC3339 for timestamps.
+
+#### CSV Output Pattern
+Unlike single-file Maps CSV, Fit CSV output creates **two files**:
+1. `daily_aggregations.csv` - One row per date with all metrics
+2. `activities.csv` - One row per activity session
+
+Implemented via `ExportBatch()` calling two separate write methods. Progress reported once at end (can't track mid-write without file buffering).
+
+#### ProcessedItem.Metadata Pattern (Critical)
+**Stored entire `*metadata.FitLibrary` in `item.Metadata["fit_library"]`** so outputs can access it. This is the correct pattern for domain objects:
+- Processor: `item.Metadata["fit_library"] = library` (store pointer)
+- Output: Type-assert and extract: `library, ok := item.Metadata["fit_library"].(*metadata.FitLibrary)`
+- NEVER use methods in inline metadata maps (methods not available at export time)
+
+### Gotchas & Fixes
+
+#### File Discovery
+Google Fit Takeout structure varies:
+- `Fit/` or `Google Fit/` or `Fitness/`
+- Daily CSVs often in `Daily Aggregations/` subfolder with names like `Daily activity metrics 2024-01-15.csv`
+- Activities may be in `Activities/` or `sessions/` subfolders
+- Scanner uses `strings.Contains()` checks on both file names and paths to catch all variants
+
+#### Empty Data Handling
+CSV parser skips rows with invalid dates (logs continue instead of error). JSON parser returns error for invalid timestamps (activities are critical data). This asymmetry matches Google's data model: daily aggregations are best-effort summaries, activities are explicit user recordings.
+
+#### Test Coverage
+30 tests total:
+- 20 metadata tests (6 CSV parsing edge cases, 4 JSON parsing, 10 interface methods)
+- 10 service tests (registration, properties, ingesters count, processors count, outputs registration)
+- No processor/output unit tests (pattern from other services - integration tests happen via TUI)
+
+#### Wiring Pattern Confirmation
+TWO blank imports required (verified working):
+1. `services/register.go`: `_ "github.com/fulgidus/revoco/services/fit"`
+2. `services/fit/service.go`: `_ "github.com/fulgidus/revoco/services/fit/outputs"`
+
+Without #2, outputs don't register despite init() in outputs.go.
+
+### Architectural Alignment
+- Shared ingesters: Used `coreingesters.NewServiceIngesters("fit", detector)` - 3 ingesters (folder/zip/tgz) with 0 custom code
+- Phased processor: 4 phases matching Maps pattern (scan → daily → activities → summary)
+- Struct fields: Service stores `ingesters []core.Ingester` and `processors []core.Processor` as pre-initialized slices (not function calls)
+- Context cancellation: Checked `<-ctx.Done()` in all loops
+- Progress reporting: Called `emit()` after each phase and file batch
+
+### Dependencies Met
+- Task 2 (shared ingesters): Used successfully
+- Task 3 (DataTypeFitnessActivity constant): Used in `GetDataType()` method
