@@ -1,0 +1,30 @@
+=== Edge Case Tests - YouTube Music Processor ===
+
+## Empty Takeout Test
+=== RUN   TestMusicProcessor_Process_Empty
+--- PASS: TestMusicProcessor_Process_Empty (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/youtubemusic/processors	0.003s
+
+## Malformed Data Test
+=== RUN   TestMusicProcessor_Process_Malformed
+    processor_test.go:395: Malformed processing stats: map[liked_songs:0 playlist_tracks:1 playlists:2 subscriptions:0 uploads:0]
+    processor_test.go:405: Log output:
+        2026/03/02 03:55:07 === YouTube Music processing started (source=/tmp/TestMusicProcessor_Process_Malformed3290407731/001/takeout) ===
+        2026/03/02 03:55:07 [Phase 1] playlists=2 tracks=1
+        2026/03/02 03:55:07 [Phase 2] liked_songs=0
+        2026/03/02 03:55:07 [Phase 3] uploads=0
+        2026/03/02 03:55:07 [Phase 4] subscriptions=0
+        2026/03/02 03:55:07 [Phase 5] Skipped - no local library path
+        2026/03/02 03:55:07 [Phase 6] Wrote library.json
+        2026/03/02 03:55:07 === YouTube Music processing complete ===
+--- PASS: TestMusicProcessor_Process_Malformed (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/youtubemusic/processors	0.003s
+
+## Cancellation Test
+=== RUN   TestMusicProcessor_Process_Cancellation
+    processor_test.go:438: Partial result: map[liked_songs:2 playlist_tracks:0 playlists:0 subscriptions:2 uploads:2]
+--- PASS: TestMusicProcessor_Process_Cancellation (0.00s)
+PASS
+ok  	github.com/fulgidus/revoco/services/youtubemusic/processors	0.003s

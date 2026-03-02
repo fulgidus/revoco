@@ -210,9 +210,9 @@ func findAssetForPlatform(release *githubRelease) (*githubAsset, string, error) 
 
 	switch goos {
 	case "windows":
-		expectedName = fmt.Sprintf("revoco_%s_%s.zip", goos, arch)
+		expectedName = fmt.Sprintf("revoco_%s_%s_%s.zip", strings.TrimPrefix(release.TagName, "v"), goos, arch)
 	case "darwin", "linux":
-		expectedName = fmt.Sprintf("revoco_%s_%s.tar.gz", goos, arch)
+		expectedName = fmt.Sprintf("revoco_%s_%s_%s.tar.gz", strings.TrimPrefix(release.TagName, "v"), goos, arch)
 	default:
 		return nil, "", fmt.Errorf("unsupported OS: %s", goos)
 	}
