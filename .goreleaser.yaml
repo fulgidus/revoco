@@ -128,7 +128,7 @@ brews:
       - name: ffmpeg
     install: |
       bin.install "revoco"
-    skip_upload: true
+    skip_upload: auto
 
 # Chocolatey packages
 chocolateys:
@@ -155,7 +155,7 @@ chocolateys:
       - id: ffmpeg
         version: 6.0.0
     api_key: '{{ .Env.CHOCOLATEY_API_KEY }}'
-    skip_publish: true
+    skip_publish: auto
 
 # Debian and RPM packages
 nfpms:
@@ -191,7 +191,7 @@ scoops:
     homepage: https://github.com/fulgidus/revoco
     description: Data liberation tool for escaping big tech walled gardens
     license: GPL-3.0
-    skip_upload: true
+    skip_upload: auto
 
 # Docker images
 dockers:
@@ -210,7 +210,7 @@ dockers:
       - '--label=org.opencontainers.image.source=https://github.com/fulgidus/revoco'
       - '--label=org.opencontainers.image.description=Data liberation tool for escaping big tech walled gardens'
       - '--label=org.opencontainers.image.licenses=GPL-3.0'
-    skip_push: true
+    skip_push: auto
 
 # AUR packages
 aurs:
@@ -225,4 +225,4 @@ aurs:
     depends:
       - exiftool
       - ffmpeg
-    skip_upload: true
+    skip_upload: auto

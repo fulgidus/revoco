@@ -26,7 +26,7 @@ FROM alpine:3.19
 LABEL org.opencontainers.image.source="https://github.com/fulgidus/revoco" \
       org.opencontainers.image.title="revoco" \
       org.opencontainers.image.description="Data liberation tool for escaping big tech walled gardens" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="GPL-3.0"
 
 # Update package index and install runtime dependencies
 RUN apk update && \

@@ -209,4 +209,4 @@ The uninstaller will prompt to remove:
 
 ## License
 
-MIT
+GPL-3.0
