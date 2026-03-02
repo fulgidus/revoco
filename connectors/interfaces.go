@@ -39,6 +39,14 @@ const (
 	DataTypeContact  DataType = "contact"
 	DataTypeDocument DataType = "document"
 	DataTypeUnknown  DataType = "unknown"
+	DataTypeEmail              DataType = "email"
+	DataTypeCalendarEvent      DataType = "calendar_event"
+	DataTypeTask               DataType = "task"
+	DataTypeBookmark           DataType = "bookmark"
+	DataTypeLocation           DataType = "location"
+	DataTypeFitnessActivity    DataType = "fitness_activity"
+	DataTypePassword           DataType = "password"
+	DataTypeBrowserHistory     DataType = "browser_history"
 )
 
 // DataItem represents a single piece of data with its type and metadata.
