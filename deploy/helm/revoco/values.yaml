@@ -1,0 +1,25 @@
+# Default values for revoco
+# This chart is scaffolding for future web UI — not functional yet
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/fulgidus/revoco
+  pullPolicy: IfNotPresent
+  tag: "latest"  # Overridden by appVersion in Chart.yaml during releases
+
+service:
+  type: ClusterIP
+  port: 80  # For future web UI
+
+resources: {}
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

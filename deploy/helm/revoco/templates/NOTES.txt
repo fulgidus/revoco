@@ -1,0 +1,10 @@
+Thank you for installing {{ .Chart.Name }}!
+
+⚠️  **IMPORTANT**: This Helm chart is scaffolding for future development.
+The revoco web UI is not yet implemented. Deployment will start but serve no traffic.
+
+To check deployment status:
+  kubectl get pods -l "app.kubernetes.io/name={{ include "revoco.name" . }},app.kubernetes.io/instance={{ .Release.Name }}"
+
+For CLI usage, install revoco via package manager instead:
+  https://github.com/fulgidus/revoco#installation

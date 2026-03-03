@@ -115,8 +115,114 @@ release:
     ---
     **Full Changelog**: https://github.com/fulgidus/revoco/compare/{{ .PreviousTag }}...{{ .Tag }}
 
-# Disable features we're not using yet
-brews: []
-chocolateys: []
-nfpms: []
-snapcrafts: []
+# Homebrew tap
+brews:
+  - repository:
+      owner: fulgidus
+      name: homebrew-revoco
+    homepage: https://github.com/fulgidus/revoco
+    description: Data liberation tool for escaping big tech walled gardens
+    license: GPL-3.0
+    dependencies:
+      - name: exiftool
+      - name: ffmpeg
+    install: |
+      bin.install "revoco"
+    skip_upload: auto
+
+# Chocolatey packages
+chocolateys:
+  - name: revoco
+    owners: fulgidus
+    authors: fulgidus
+    project_url: https://github.com/fulgidus/revoco
+    icon_url: https://github.com/fulgidus/revoco/raw/main/logo/revoco.png
+    copyright: 2026 fulgidus
+    license_url: https://github.com/fulgidus/revoco/blob/main/LICENSE
+    require_license_acceptance: false
+    project_source_url: https://github.com/fulgidus/revoco
+    docs_url: https://github.com/fulgidus/revoco/blob/main/README.md
+    bug_tracker_url: https://github.com/fulgidus/revoco/issues
+    tags: data-liberation google-photos google-drive takeout exif metadata
+    summary: Data liberation tool for escaping big tech walled gardens
+    description: |
+      Revoco helps you take back control of your data by importing from cloud services and exporting to storage you own.
+      Currently focused on Google services (Drive, Photos Takeout), with more connectors planned.
+    release_notes: https://github.com/fulgidus/revoco/releases/tag/v{{ .Version }}
+    dependencies:
+      - id: exiftool
+        version: 12.0.0
+      - id: ffmpeg
+        version: 6.0.0
+    api_key: '{{ .Env.CHOCOLATEY_API_KEY }}'
+    skip_publish: auto
+
+# Debian and RPM packages
+nfpms:
+  - id: revoco
+    package_name: revoco
+    file_name_template: '{{ .ConventionalFileName }}'
+    vendor: fulgidus
+    homepage: https://github.com/fulgidus/revoco
+    maintainer: fulgidus <fulgidus@users.noreply.github.com>
+    description: Data liberation tool for escaping big tech walled gardens
+    license: GPL-3.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/revoco/LICENSE
+    dependencies:
+      - libimage-exiftool-perl
+      - ffmpeg
+    overrides:
+      rpm:
+        dependencies:
+          - perl-Image-ExifTool
+          - ffmpeg
+
+# Scoop bucket
+scoops:
+  - repository:
+      owner: fulgidus
+      name: scoop-revoco
+    homepage: https://github.com/fulgidus/revoco
+    description: Data liberation tool for escaping big tech walled gardens
+    license: GPL-3.0
+    skip_upload: auto
+
+# Docker images
+dockers:
+  - image_templates:
+      - 'ghcr.io/fulgidus/revoco:{{ .Tag }}'
+      - 'ghcr.io/fulgidus/revoco:v{{ .Major }}'
+      - 'ghcr.io/fulgidus/revoco:v{{ .Major }}.{{ .Minor }}'
+      - 'ghcr.io/fulgidus/revoco:latest'
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - '--pull'
+      - '--label=org.opencontainers.image.created={{ .Date }}'
+      - '--label=org.opencontainers.image.title={{ .ProjectName }}'
+      - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
+      - '--label=org.opencontainers.image.version={{ .Version }}'
+      - '--label=org.opencontainers.image.source=https://github.com/fulgidus/revoco'
+      - '--label=org.opencontainers.image.description=Data liberation tool for escaping big tech walled gardens'
+      - '--label=org.opencontainers.image.licenses=GPL-3.0'
+    skip_push: auto
+
+# AUR packages
+aurs:
+  - name: revoco-bin
+    homepage: https://github.com/fulgidus/revoco
+    description: Data liberation tool for escaping big tech walled gardens
+    maintainers:
+      - 'fulgidus <fulgidus@users.noreply.github.com>'
+    license: GPL-3.0
+    private_key: '{{ .Env.AUR_SSH_PRIVATE_KEY }}'
+    git_url: 'ssh://aur@aur.archlinux.org/revoco-bin.git'
+    depends:
+      - exiftool
+      - ffmpeg
+    skip_upload: auto
