@@ -174,9 +174,12 @@ func TestPasswordLibrary_CalculateStats(t *testing.T) {
 		t.Errorf("Expected 1 entry without username, got %d", lib.Stats.EntriesNoUsername)
 	}
 
-	// Check domain breakdown
-	if count, ok := lib.Stats.DomainBreakdown["google.com"]; !ok || count != 2 {
-		t.Errorf("Expected 2 entries for google.com, got %d", count)
+	// Check domain breakdown — subdomains are tracked separately
+	if count, ok := lib.Stats.DomainBreakdown["google.com"]; !ok || count != 1 {
+		t.Errorf("Expected 1 entry for google.com, got %d", count)
+	}
+	if count, ok := lib.Stats.DomainBreakdown["mail.google.com"]; !ok || count != 1 {
+		t.Errorf("Expected 1 entry for mail.google.com, got %d", count)
 	}
 }
 
