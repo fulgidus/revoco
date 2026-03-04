@@ -89,6 +89,22 @@ func DefaultConfig() *Config {
 	}
 }
 
+// ValidateChannel validates that the channel is either "stable" or "dev".
+func ValidateChannel(channel string) error {
+	if channel == "stable" || channel == "dev" {
+		return nil
+	}
+	return fmt.Errorf("invalid channel: %q, must be 'stable' or 'dev'", channel)
+}
+
+// NormalizeChannel ensures the channel is valid, defaulting to "stable" for unrecognized values.
+func NormalizeChannel(channel string) string {
+	if channel == "stable" || channel == "dev" {
+		return channel
+	}
+	return "stable"
+}
+
 // ConfigDir returns the configuration directory path.
 func ConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -130,6 +146,9 @@ func LoadFrom(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
+
+	// Normalize channel (migrate old beta/nightly to stable)
+	cfg.Updates.Channel = NormalizeChannel(cfg.Updates.Channel)
 
 	return cfg, nil
 }
