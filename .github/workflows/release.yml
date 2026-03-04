@@ -61,7 +61,9 @@ jobs:
           SCOOP_TAP_TOKEN: ${{ secrets.WINGET_TOKEN }}
 
       - name: Submit to Winget
-        if: "!contains(github.ref, '-')"  # Skip pre-releases
+        # Skip pre-releases; continue-on-error until first manual submission to winget-pkgs
+        if: "!contains(github.ref, '-')"
+        continue-on-error: true
         uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: fulgidus.revoco
