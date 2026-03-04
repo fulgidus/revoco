@@ -120,6 +120,7 @@ brews:
   - repository:
       owner: fulgidus
       name: homebrew-revoco
+      token: '{{ .Env.SCOOP_TAP_TOKEN }}'
     homepage: https://github.com/fulgidus/revoco
     description: Data liberation tool for escaping big tech walled gardens
     license: GPL-3.0
@@ -169,6 +170,7 @@ scoops:
   - repository:
       owner: fulgidus
       name: scoop-revoco
+      token: '{{ .Env.SCOOP_TAP_TOKEN }}'
     homepage: https://github.com/fulgidus/revoco
     description: Data liberation tool for escaping big tech walled gardens
     license: GPL-3.0
