@@ -279,6 +279,11 @@ func (m DashboardModel) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "s": // Settings
+			return m, func() tea.Msg {
+				return SwitchScreenMsg{To: ScreenSettings}
+			}
+
 		case "esc", "q":
 			return m, func() tea.Msg {
 				return SwitchScreenMsg{To: ScreenSessions}

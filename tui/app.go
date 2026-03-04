@@ -25,6 +25,7 @@ const (
 	ScreenRepair                        // fallback-based repair
 	ScreenPush                          // output to destinations
 	ScreenUpdateConfirm                 // update confirmation dialog
+	ScreenSettings                      // settings screen
 )
 
 // App is the top-level Bubble Tea model that hosts all screens.
@@ -40,6 +41,7 @@ type App struct {
 	repair          RepairModel
 	push            PushModel
 	updateConfirm   UpdateConfirmModel
+	settings        SettingsModel
 	width           int
 	height          int
 
@@ -216,6 +218,10 @@ func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m, cmd := a.updateConfirm.Update(msg)
 		a.updateConfirm = m.(UpdateConfirmModel)
 		return a, cmd
+	case ScreenSettings:
+		m, cmd := a.settings.Update(msg)
+		a.settings = m.(SettingsModel)
+		return a, cmd
 	}
 	return a, nil
 }
@@ -259,6 +265,10 @@ func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd := a.push.Update(msg)
 		a.push = m.(PushModel)
 		return a, cmd
+	case ScreenSettings:
+		m, cmd := a.settings.Update(msg)
+		a.settings = m.(SettingsModel)
+		return a, cmd
 	}
 	return a, nil
 }
@@ -291,6 +301,8 @@ func (a App) View() string {
 		content = a.push.View()
 	case ScreenUpdateConfirm:
 		content = a.updateConfirm.View()
+	case ScreenSettings:
+		content = a.settings.View()
 	default:
 		content = a.sessions.View()
 	}
@@ -409,6 +421,10 @@ func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 			a.push = NewPushModel(a.activeSession)
 		}
 		return a, tea.Batch(a.push.Init(), sizeCmd)
+
+	case ScreenSettings:
+		a.settings = NewSettingsModel()
+		return a, tea.Batch(a.settings.Init(), sizeCmd)
 
 	default:
 		a.sessions = NewSessionsModel()
