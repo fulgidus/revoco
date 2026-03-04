@@ -65,6 +65,25 @@ get_latest_version() {
     fi
 }
 
+# Get latest dev version from GitHub API
+get_latest_dev_version() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=100" | \
+            grep '"tag_name":' | \
+            sed -E 's/.*"([^"]+)".*/\1/' | \
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev-' | \
+            head -1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "https://api.github.com/repos/${REPO}/releases?per_page=100" | \
+            grep '"tag_name":' | \
+            sed -E 's/.*"([^"]+)".*/\1/' | \
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev-' | \
+            head -1
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+}
+
 # Download file
 download() {
     url="$1"
@@ -163,23 +182,106 @@ configure_path() {
     return 0
 }
 
+# Parse command line arguments
+parse_args() {
+    CHANNEL="stable"
+    HELP_FLAG=""
+    
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --channel)
+                if [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+                    error "Missing argument for --channel. Use: --channel <stable|dev>"
+                fi
+                if [ "$2" != "stable" ] && [ "$2" != "dev" ]; then
+                    error "Invalid channel: $2. Must be 'stable' or 'dev'"
+                fi
+                CHANNEL="$2"
+                shift 2
+                ;;
+            --help)
+                HELP_FLAG="yes"
+                shift
+                ;;
+            *)
+                error "Unknown option: $1. Use --help for usage information."
+                ;;
+        esac
+    done
+    
+    if [ -n "$HELP_FLAG" ]; then
+        cat << 'HELPEOF'
+revoco installer
+
+Usage: install.sh [OPTIONS]
+
+Options:
+  --channel <stable|dev>  Select update channel (default: stable)
+                          stable: Official releases (recommended)
+                          dev:    Development builds (bleeding edge)
+  --help                  Show this help message
+
+Environment Variables:
+  REVOCO_INSTALL_DIR      Installation directory (default: ~/.local/bin)
+  REVOCO_VERSION          Specific version to install (overrides channel)
+
+Examples:
+  # Install latest stable version
+  ./install.sh
+
+  # Install latest dev version
+  ./install.sh --channel dev
+
+  # Piped installation (defaults to stable)
+  curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash
+HELPEOF
+        exit 0
+    fi
+}
+
 # Main installation
 main() {
+    # Parse command line arguments
+    parse_args "$@"
+    
     info "revoco installer"
     echo ""
-    
     # Detect platform
     OS=$(detect_os)
     ARCH=$(detect_arch)
     info "Detected platform: ${OS}/${ARCH}"
     
+    # Determine channel (interactive prompt if TTY and no explicit version)
+    if [ -t 0 ] && [ -z "$REVOCO_VERSION" ]; then
+        # Interactive mode - prompt for channel if not already set via --channel
+        if [ "$CHANNEL" = "stable" ]; then
+            echo ""
+            echo "Select update channel:"
+            echo "  1) stable (recommended) - Official releases"
+            echo "  2) dev                  - Development builds (bleeding edge)"
+            printf "Enter choice [1]: "
+            read -r CHANNEL_CHOICE
+            case "$CHANNEL_CHOICE" in
+                2|dev) CHANNEL="dev" ;;
+                1|stable|"") CHANNEL="stable" ;;
+                *) warn "Invalid choice, defaulting to stable"; CHANNEL="stable" ;;
+            esac
+        fi
+    fi
+    
+    info "Using channel: ${CHANNEL}"
+    
     # Determine version
     VERSION="${REVOCO_VERSION:-}"
     if [ -z "$VERSION" ]; then
-        info "Fetching latest version..."
-        VERSION=$(get_latest_version)
+        if [ "$CHANNEL" = "dev" ]; then
+            info "Fetching latest dev version..."
+            VERSION=$(get_latest_dev_version)
+        else
+            info "Fetching latest stable version..."
+            VERSION=$(get_latest_version)
+        fi
     fi
-    
     if [ -z "$VERSION" ]; then
         error "Could not determine version to install"
     fi
@@ -296,6 +398,19 @@ EOF
   "installed_at": "${INSTALL_TIME}"
 }
 EOF
+    fi
+    
+    # Write channel to config.json if it doesn't exist
+    CONFIG_FILE="${CONFIG_DIR}/config.json"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cat > "$CONFIG_FILE" << EOF
+{
+  "updates": {
+    "channel": "${CHANNEL}"
+  }
+}
+EOF
+        info "Channel preference saved: ${CHANNEL}"
     fi
     
     # Verify installation
