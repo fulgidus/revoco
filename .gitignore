@@ -1,6 +1,8 @@
 # Agent knowledge base - never commit
 AGENTS.md
 .sisyphus/
+.opencode/
+setup-omo.sh
 
 # IDE
 .idea/
