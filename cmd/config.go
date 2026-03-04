@@ -68,7 +68,7 @@ Available keys:
   updates.auto-install      Enable/disable automatic update installation (true/false)
   updates.check-interval    How often to check for updates (e.g., "24h", "1h")
   updates.include-prerelease Include pre-release versions (true/false)
-  updates.channel           Update channel (stable/beta/nightly)
+		updates.channel           Update channel (stable/dev)
   plugins.auto-update       Enable/disable automatic plugin updates (true/false)
   plugins.update-interval   How often to check for plugin updates
   plugins.registry-url      Custom plugin registry URL
@@ -96,9 +96,9 @@ Examples:
 		case "updates.include-prerelease":
 			cfg.Updates.IncludePrerelease = parseBool(value)
 		case "updates.channel":
-			if value != "stable" && value != "beta" && value != "nightly" {
-				return fmt.Errorf("invalid channel: %s (must be stable, beta, or nightly)", value)
-			}
+		if err := config.ValidateChannel(value); err != nil {
+			return err
+		}
 			cfg.Updates.Channel = value
 		case "plugins.auto-update":
 			cfg.Plugins.AutoUpdate = parseBool(value)

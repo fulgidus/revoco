@@ -41,7 +41,7 @@ type UpdateConfig struct {
 	// SkippedVersion is a version the user chose to skip
 	SkippedVersion string `json:"skipped_version,omitempty"`
 
-	// Channel is the update channel (stable, beta, nightly)
+	// Channel is the update channel (stable, dev)
 	Channel string `json:"channel"`
 }
 
