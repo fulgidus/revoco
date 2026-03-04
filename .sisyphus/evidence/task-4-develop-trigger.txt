@@ -1,0 +1,4 @@
+6:    branches:
+7-      - develop
+
+✓ Triggers on push to develop branch

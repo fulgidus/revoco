@@ -1,0 +1,3 @@
+57:          args: release --config .goreleaser.dev.yaml --clean
+
+✓ References .goreleaser.dev.yaml config

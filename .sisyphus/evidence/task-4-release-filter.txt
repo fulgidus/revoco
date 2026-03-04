@@ -1,0 +1,3 @@
+8:      - '!v*-dev-*'
+
+✓ release.yml excludes dev tags with pattern !v*-dev-*

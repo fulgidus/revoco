@@ -1,0 +1,1 @@
+✓ No --snapshot flag present in ci-dev.yaml
