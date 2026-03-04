@@ -456,3 +456,57 @@ Want to help? Pick an unchecked item and submit a PR!
 - OpenDocument support (ODT, ODS, ODP)
 - PDF export for any document type
 - Markdown export for notes/docs
+
+---
+
+## Winget Initial Submission
+
+The winget release automation ([vedantmgoyal9/winget-releaser@v2](https://github.com/vedantmgoyal9/winget-releaser)) requires an initial manual submission to microsoft/winget-pkgs. Subsequent releases are automated after the first approval.
+
+### Prerequisites
+
+- Package name: `fulgidus.revoco`
+- GitHub Personal Access Token (Classic) with `public_repo` scope
+- Token must be available as `WINGET_TOKEN` secret in GitHub repository
+
+### Initial Submission Process
+
+**Option 1: Using `wingetcreate` CLI (Recommended)**
+
+1. Install [`wingetcreate`](https://learn.microsoft.com/en-us/windows/package-manager/wingetcreate/)
+2. Create manifest files:
+
+   ```sh
+   wingetcreate new https://github.com/fulgidus/revoco/releases/download/v0.1.8/revoco_0.1.8_windows_amd64.exe
+   ```
+
+3. Verify generated manifests in `manifests/` directory
+4. Submit PR to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
+
+**Option 2: Manual Submission**
+
+1. Fork [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
+2. Create manifest YAML files following their [schema](https://github.com/microsoft/winget-cli/tree/master/schemas) for versions:
+   - `manifests/f/fulgidus/revoco/0.1.8/fulgidus.revoco.installer.yaml`
+   - `manifests/f/fulgidus/revoco/0.1.8/fulgidus.revoco.locale.en-US.yaml`
+   - `manifests/f/fulgidus/revoco/0.1.8/fulgidus.revoco.yaml`
+3. Submit PR with manifest files
+
+### Review Timeline
+
+- Initial submission review: **1-3 business days**
+- Automated updates after approval: **Near-immediate** (same day)
+
+### Post-Approval Actions
+
+Once the first submission is approved and merged:
+
+1. The GitHub Actions `winget-releaser` job will automatically submit future releases
+2. Consider removing `continue-on-error: true` from [`.github/workflows/release.yml:67`](https://github.com/fulgidus/revoco/blob/develop/.github/workflows/release.yml#L67) to enforce workflow success
+
+### Reference Documentation
+
+- [Winget-pkgs Contribution Guide](https://github.com/microsoft/winget-pkgs/blob/master/CONTRIBUTING.md)
+- [Manifest Schema](https://github.com/microsoft/winget-cli/tree/master/schemas)
+- [vedantmgoyal9/winget-releaser](https://github.com/vedantmgoyal9/winget-releaser)
+- [wingetcreate Documentation](https://learn.microsoft.com/en-us/windows/package-manager/wingetcreate/)
