@@ -128,7 +128,8 @@ brews:
       - name: ffmpeg
     install: |
       bin.install "revoco"
-    skip_upload: auto
+    # Homebrew Formulas are deprecated in GoReleaser v2; migrate to homebrew_casks
+    disable: true
 
 # Chocolatey packages
 chocolateys:
@@ -155,7 +156,7 @@ chocolateys:
       - id: ffmpeg
         version: 6.0.0
     api_key: '{{ .Env.CHOCOLATEY_API_KEY }}'
-    skip_publish: auto
+    skip_publish: false
 
 # Debian and RPM packages
 nfpms:
@@ -191,7 +192,7 @@ scoops:
     homepage: https://github.com/fulgidus/revoco
     description: Data liberation tool for escaping big tech walled gardens
     license: GPL-3.0
-    skip_upload: auto
+    skip_upload: false
 
 # Docker images
 dockers:
@@ -210,7 +211,7 @@ dockers:
       - '--label=org.opencontainers.image.source=https://github.com/fulgidus/revoco'
       - '--label=org.opencontainers.image.description=Data liberation tool for escaping big tech walled gardens'
       - '--label=org.opencontainers.image.licenses=GPL-3.0'
-    skip_push: auto
+    skip_push: false
 
 # AUR packages
 aurs:
@@ -225,4 +226,4 @@ aurs:
     depends:
       - exiftool
       - ffmpeg
-    skip_upload: auto
+    skip_upload: false
