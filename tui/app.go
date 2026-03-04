@@ -3,11 +3,13 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fulgidus/revoco/cmd"
+	"github.com/fulgidus/revoco/config"
 	"github.com/fulgidus/revoco/session"
 )
 
@@ -26,6 +28,7 @@ const (
 	ScreenPush                          // output to destinations
 	ScreenUpdateConfirm                 // update confirmation dialog
 	ScreenSettings                      // settings screen
+	ScreenFirstRun                      // first-run channel selection
 )
 
 // App is the top-level Bubble Tea model that hosts all screens.
@@ -42,6 +45,7 @@ type App struct {
 	push            PushModel
 	updateConfirm   UpdateConfirmModel
 	settings        SettingsModel
+	firstRun        FirstRunModel
 	width           int
 	height          int
 
@@ -57,9 +61,24 @@ type App struct {
 
 // NewApp creates the TUI application starting on the Sessions screen.
 func NewApp() App {
+	// Check if this is first run (no config file)
+	configPath, _ := config.ConfigPath()
+	isFirstRun := false
+	if configPath != "" {
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			isFirstRun = true
+		}
+	}
+
+	initialScreen := ScreenSessions
+	if isFirstRun {
+		initialScreen = ScreenFirstRun
+	}
+
 	return App{
-		screen:   ScreenSessions,
+		screen:   initialScreen,
 		sessions: NewSessionsModel(),
+		firstRun: NewFirstRunModel(),
 		updateState: UpdateState{
 			Checking: true, // Will start checking on Init
 		},
@@ -222,6 +241,10 @@ func (a App) propagateSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m, cmd := a.settings.Update(msg)
 		a.settings = m.(SettingsModel)
 		return a, cmd
+	case ScreenFirstRun:
+		m, cmd := a.firstRun.Update(msg)
+		a.firstRun = m.(FirstRunModel)
+		return a, cmd
 	}
 	return a, nil
 }
@@ -265,6 +288,10 @@ func (a App) delegateMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd := a.push.Update(msg)
 		a.push = m.(PushModel)
 		return a, cmd
+	case ScreenFirstRun:
+		m, cmd := a.firstRun.Update(msg)
+		a.firstRun = m.(FirstRunModel)
+		return a, cmd
 	case ScreenSettings:
 		m, cmd := a.settings.Update(msg)
 		a.settings = m.(SettingsModel)
@@ -303,6 +330,8 @@ func (a App) View() string {
 		content = a.updateConfirm.View()
 	case ScreenSettings:
 		content = a.settings.View()
+	case ScreenFirstRun:
+		content = a.firstRun.View()
 	default:
 		content = a.sessions.View()
 	}
@@ -425,6 +454,10 @@ func (a App) switchScreen(msg SwitchScreenMsg) (tea.Model, tea.Cmd) {
 	case ScreenSettings:
 		a.settings = NewSettingsModel()
 		return a, tea.Batch(a.settings.Init(), sizeCmd)
+
+	case ScreenFirstRun:
+		a.firstRun = NewFirstRunModel()
+		return a, tea.Batch(a.firstRun.Init(), sizeCmd)
 
 	default:
 		a.sessions = NewSessionsModel()
