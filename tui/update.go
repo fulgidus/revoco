@@ -3,15 +3,16 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fulgidus/revoco/cmd"
+	"github.com/fulgidus/revoco/config"
+	"github.com/fulgidus/revoco/internal/update"
+	"github.com/fulgidus/revoco/internal/version"
 	"github.com/fulgidus/revoco/plugins"
 )
 
@@ -89,52 +90,51 @@ func CheckForUpdatesCmd() tea.Cmd {
 	}
 }
 
+// Package-level constants for GitHub API configuration (testable via var override)
+var (
+	githubAPI   = "https://api.github.com"
+	githubOwner = "fulgidus"
+	githubRepo  = "revoco"
+)
+
 // checkRevocoUpdate checks GitHub for a newer version of revoco.
-// Returns empty string if up-to-date, or the new version string if available.
+// Returns empty string if up-to-date, or the new version string with channel prefix if available.
 func checkRevocoUpdate(ctx context.Context) (string, error) {
-	const (
-		githubAPI   = "https://api.github.com"
-		githubOwner = "fulgidus"
-		githubRepo  = "revoco"
-	)
-
-	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPI, githubOwner, githubRepo)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Load config to determine channel
+	cfg, err := config.Load()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to load config: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "revoco-tui")
 
-	resp, err := http.DefaultClient.Do(req)
+	// Determine channel (default to stable)
+	channel := config.NormalizeChannel(cfg.Updates.Channel)
+
+	// Fetch latest release using internal/update dispatcher
+	release, err := update.FetchLatestRelease(ctx, githubAPI, githubOwner, githubRepo, channel)
 	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("no releases found")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("failed to fetch %s release: %w", channel, err)
 	}
 
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", fmt.Errorf("failed to parse release: %w", err)
-	}
-
+	// Get current version
 	currentVersion := cmd.GetVersion()
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	currentClean := strings.TrimPrefix(currentVersion, "v")
 
-	if currentClean == latestVersion || currentClean == "dev" {
-		return "", nil // Up to date or dev version
+	// If current version is "dev" (not a valid semver), always show update available
+	if currentVersion == "dev" {
+		return strings.TrimPrefix(release.TagName, "v"), nil
 	}
 
+	// Compare versions using internal/version.IsNewer
+	isNewer, err := version.IsNewer(release.TagName, currentVersion)
+	if err != nil {
+		return "", fmt.Errorf("failed to compare versions: %w", err)
+	}
+
+	if !isNewer {
+		return "", nil // Up to date
+	}
+
+	// Return version string with channel prefix for notification
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	return latestVersion, nil
 }
 
@@ -225,7 +225,13 @@ func (s *UpdateState) StatusLine() string {
 
 	var parts []string
 	if s.RevocoUpdateAvailable != "" {
-		parts = append(parts, fmt.Sprintf("revoco v%s available (press 'u' to update)", s.RevocoUpdateAvailable))
+		// Determine channel for display
+		cfg, _ := config.Load()
+		channel := "stable"
+		if cfg != nil {
+			channel = config.NormalizeChannel(cfg.Updates.Channel)
+		}
+		parts = append(parts, fmt.Sprintf("revoco v%s available (%s channel, press 'u' to update)", s.RevocoUpdateAvailable, channel))
 	}
 	if len(s.PluginUpdatesAvailable) > 0 {
 		ids := make([]string, len(s.PluginUpdatesAvailable))
