@@ -128,7 +128,7 @@ brews:
       - name: ffmpeg
     install: |
       bin.install "revoco"
-    skip_upload: true
+    skip_upload: false
 
 # Chocolatey packages
 # TODO: Requires 'choco' CLI on the runner. Re-enable when workflow uses a
