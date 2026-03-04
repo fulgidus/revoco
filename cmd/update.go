@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fulgidus/revoco/config"
+	"github.com/fulgidus/revoco/internal/update"
+	"github.com/fulgidus/revoco/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -62,11 +64,13 @@ Examples:
 var (
 	flagUpdateInstall bool
 	flagUpdateForce   bool
+	flagUpdateChannel string
 )
 
 func init() {
 	updateCmd.Flags().BoolVar(&flagUpdateInstall, "install", false, "Install the update")
 	updateCmd.Flags().BoolVar(&flagUpdateForce, "force", false, "Force update even if on latest version")
+	updateCmd.Flags().StringVar(&flagUpdateChannel, "channel", "", "Update channel (stable/dev), overrides config")
 
 	rootCmd.AddCommand(updateCmd)
 }
@@ -80,8 +84,24 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Current version: %s\n", currentVersion)
 	fmt.Println("Checking for updates...")
 
-	// Fetch latest release
-	release, err := fetchLatestRelease(ctx)
+	// Determine channel (flag overrides config)
+	channel := flagUpdateChannel
+	if channel == "" {
+		cfg, err := config.Load()
+		if err == nil {
+			channel = cfg.Updates.Channel
+		} else {
+			channel = "stable" // Default fallback
+		}
+	}
+
+	// Validate channel
+	if err := config.ValidateChannel(channel); err != nil {
+		return fmt.Errorf("invalid channel: %w", err)
+	}
+
+	// Fetch latest release using channel-aware dispatcher
+	release, err := fetchLatestRelease(ctx, channel)
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -91,7 +111,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Latest version:  %s\n", latestVersion)
 
-	if currentClean == latestVersion && !flagUpdateForce {
+	// Use semver comparison instead of string equality
+	isNewer, err := version.IsNewer(latestVersion, currentClean)
+	if err != nil {
+		return fmt.Errorf("version comparison failed: %w", err)
+	}
+
+	// Check for dev-to-stable downgrade scenario
+	if version.IsDevVersion(currentVersion) && !version.IsDevVersion(latestVersion) {
+		if !isNewer {
+			fmt.Println("\n⚠️  Warning: You are on a newer dev version. Installing this stable version will be a downgrade.")
+			fmt.Printf("    Current: %s (dev)\n", currentVersion)
+			fmt.Printf("    Latest stable: %s\n", latestVersion)
+		}
+	}
+
+	if !isNewer && !flagUpdateForce {
 		fmt.Println("\nYou are already on the latest version.")
 		return nil
 	}
@@ -154,36 +189,36 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// fetchLatestRelease fetches the latest release from GitHub.
-func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPI, githubOwner, githubRepo)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// fetchLatestRelease fetches the latest release from GitHub using the specified channel.
+// It converts the internal/update.Release type to githubRelease for compatibility with
+	// existing download/install pipeline.
+func fetchLatestRelease(ctx context.Context, channel string) (*githubRelease, error) {
+	// Use channel-aware dispatcher from internal/update
+	release, err := update.FetchLatestRelease(ctx, githubAPI, githubOwner, githubRepo, channel)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "revoco-updater")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("no releases found")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	// Convert update.Release to githubRelease
+	// The structs are identical, just map field by field
+	assets := make([]githubAsset, len(release.Assets))
+	for i, a := range release.Assets {
+		assets[i] = githubAsset{
+			Name:               a.Name,
+			BrowserDownloadURL: a.BrowserDownloadURL,
+			Size:               a.Size,
+		}
 	}
 
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("failed to parse release: %w", err)
-	}
-
-	return &release, nil
+	return &githubRelease{
+		TagName:     release.TagName,
+		Name:        release.Name,
+		Draft:       release.Draft,
+		Prerelease:  release.Prerelease,
+		Assets:      assets,
+		Body:        release.Body,
+		PublishedAt: release.PublishedAt,
+	}, nil
 }
 
 // findAssetForPlatform finds the appropriate asset for the current platform.

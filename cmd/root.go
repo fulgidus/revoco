@@ -399,7 +399,14 @@ func initializeOnStartup(cmd *cobra.Command) error {
 func checkAndPrintUpdates(ctx context.Context) {
 	fmt.Fprintln(os.Stderr, "[updates] Checking for revoco updates...")
 
-	release, err := fetchLatestRelease(ctx)
+	// Load config to determine channel
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[updates] Unable to load config: %v\n", err)
+		return
+	}
+
+	release, err := fetchLatestRelease(ctx, cfg.Updates.Channel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[updates] Unable to check for updates: %v\n", err)
 		return
@@ -419,7 +426,6 @@ func checkAndPrintUpdates(ctx context.Context) {
 	}
 
 	// Record check time
-	cfg := config.Get()
 	_ = cfg.RecordUpdateCheck()
 }
 
