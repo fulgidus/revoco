@@ -128,8 +128,7 @@ brews:
       - name: ffmpeg
     install: |
       bin.install "revoco"
-    # Homebrew Formulas are deprecated in GoReleaser v2; migrate to homebrew_casks
-    disable: true
+    skip_upload: true
 
 # Chocolatey packages
 chocolateys:
