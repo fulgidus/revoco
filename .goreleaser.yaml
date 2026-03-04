@@ -131,31 +131,12 @@ brews:
     skip_upload: true
 
 # Chocolatey packages
-chocolateys:
-  - name: revoco
-    owners: fulgidus
-    authors: fulgidus
-    project_url: https://github.com/fulgidus/revoco
-    icon_url: https://github.com/fulgidus/revoco/raw/main/logo/revoco.png
-    copyright: 2026 fulgidus
-    license_url: https://github.com/fulgidus/revoco/blob/main/LICENSE
-    require_license_acceptance: false
-    project_source_url: https://github.com/fulgidus/revoco
-    docs_url: https://github.com/fulgidus/revoco/blob/main/README.md
-    bug_tracker_url: https://github.com/fulgidus/revoco/issues
-    tags: data-liberation google-photos google-drive takeout exif metadata
-    summary: Data liberation tool for escaping big tech walled gardens
-    description: |
-      Revoco helps you take back control of your data by importing from cloud services and exporting to storage you own.
-      Currently focused on Google services (Drive, Photos Takeout), with more connectors planned.
-    release_notes: https://github.com/fulgidus/revoco/releases/tag/v{{ .Version }}
-    dependencies:
-      - id: exiftool
-        version: 12.0.0
-      - id: ffmpeg
-        version: 6.0.0
-    api_key: '{{ .Env.CHOCOLATEY_API_KEY }}'
-    skip_publish: false
+# TODO: Requires 'choco' CLI on the runner. Re-enable when workflow uses a
+# Windows runner or installs mono+choco on ubuntu.
+# chocolateys:
+#   - name: revoco
+#     skip_publish: false
+#     api_key: '{{ .Env.CHOCOLATEY_API_KEY }}'
 
 # Debian and RPM packages
 nfpms:
