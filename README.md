@@ -44,12 +44,27 @@ Track import/export operations with versioned schemas, connector configurations,
 
 ---
 
+## Update Channels
+
+Revoco offers two release channels:
+
+- **Stable** (default) — Production-ready releases, fully tested. Recommended for most users.
+- **Dev** — Bleeding edge builds from the develop branch. Multiple releases per day. For contributors, testers, and users who want the latest features.
+
+The dev channel receives updates via GitHub Releases and Docker only (package managers remain stable-only).
+
+---
+
 ## Installation
 
 ### Quick Install (Linux/macOS)
 
 ```sh
+# Stable channel (default)
 curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash
+
+# Dev channel
+curl -fsSL https://raw.githubusercontent.com/fulgidus/revoco/main/install.sh | bash -s -- --channel dev
 ```
 
 ### macOS (Homebrew)
@@ -111,8 +126,13 @@ winget install fulgidus.revoco
 ### Container (Docker)
 
 ```sh
+# Stable channel (default)
 docker pull ghcr.io/fulgidus/revoco:latest
 docker run -it --rm -v "$(pwd):/data" ghcr.io/fulgidus/revoco:latest
+
+# Dev channel
+docker pull ghcr.io/fulgidus/revoco:dev
+docker run -it --rm -v "$(pwd):/data" ghcr.io/fulgidus/revoco:dev
 ```
 
 ### From Source
@@ -181,6 +201,26 @@ revoco config set updates.auto-check true
 # Enable automatic plugin updates
 revoco config set plugins.auto-update true
 ```
+
+### Switching Channels
+
+**CLI:**
+
+```sh
+# Switch to dev channel
+revoco config set updates.channel dev
+
+# Switch back to stable
+revoco config set updates.channel stable
+```
+
+**TUI:**
+
+1. Launch `revoco`
+2. Press `s` to open Settings
+3. Select your preferred channel
+4. Press Enter to save
+5. Restart revoco for changes to take effect
 
 ---
 
