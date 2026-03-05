@@ -33,8 +33,7 @@ jobs:
         id: tag
         run: |
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          DEV_TAG="${LATEST_TAG}-dev-$(date -u +%Y-%m-%dT%H-%M-%S)-${SHORT_SHA}"
+          DEV_TAG="${LATEST_TAG}-dev-$(date -u +%Y%m%dT%H%M%S)"
           echo "tag=${DEV_TAG}" >> $GITHUB_OUTPUT
 
       - name: Create and push tag
