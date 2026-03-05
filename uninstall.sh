@@ -157,6 +157,18 @@ get_shell_config() {
     fi
 }
 
+# Get update channel from config.json or return 'unknown'
+get_update_channel() {
+    config_file="$CONFIG_DIR/config.json"
+    if [ -f "$config_file" ]; then
+        # Parse JSON manually (portable) - extract updates.channel value
+        grep '"channel"' "$config_file" 2>/dev/null | \
+            sed 's/.*"channel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "unknown"
+    else
+        echo "unknown (no config found)"
+    fi
+}
+
 # Remove PATH configuration from shell config file
 # Returns 0 on success, 1 if not found or error
 remove_path_config() {
@@ -315,6 +327,10 @@ Example:
         printf "  Config:       ${YELLOW}not found${NC}\n"
         HAVE_CONFIG=false
     fi
+    
+    # Channel (informational, from config if present)
+    UPDATE_CHANNEL=$(get_update_channel)
+    printf "  Channel:      %s\n" "$UPDATE_CHANNEL"
     
     # Plugins (subdirectory of config)
     PLUGINS_DIR="$CONFIG_DIR/plugins"
