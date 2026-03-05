@@ -437,6 +437,8 @@ These should be implemented early as they enable interoperability:
 - [ ] Headless/daemon mode
 - [ ] Docker deployment
 - [ ] Multi-platform builds (Linux, macOS, Windows)
+- [ ] Dev channel package manager support - Consider creating parallel package manager release faucets for the dev channel: separate Homebrew tap (e.g., homebrew-revoco-dev), separate Scoop bucket, separate AUR package (revoco-dev-bin), separate winget package ID (fulgidus.revoco.dev). This would allow dev users to receive updates via their package manager instead of GitHub Releases only. Evaluate effort vs benefit once dev channel adoption is measurable.
+- [ ] Dev release cleanup/pruning automation - Implement automated cleanup for dev releases to prevent unlimited accumulation (multiple releases per day). Consider retention policy (e.g., keep last 30 days, or last 50 releases).
 
 ---
 
