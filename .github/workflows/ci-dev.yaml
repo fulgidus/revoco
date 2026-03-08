@@ -32,7 +32,7 @@ jobs:
       - name: Generate dev tag
         id: tag
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST_TAG=$(git describe --tags --match 'v[0-9]*' --exclude '*-dev-*' --abbrev=0 2>/dev/null || echo "v0.0.0")
           DEV_TAG="${LATEST_TAG}-dev-$(date -u +%Y%m%dT%H%M%S)"
           echo "tag=${DEV_TAG}" >> $GITHUB_OUTPUT
 
