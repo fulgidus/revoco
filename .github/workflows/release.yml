@@ -49,6 +49,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine previous stable tag
+        id: previous_tag
+        run: |
+          PREVIOUS_TAG=$(git tag --sort=-version:refname --list 'v*' | grep -Ev -- '-dev-' | grep -Fxv "${GITHUB_REF_NAME}" | head -n 1 || true)
+          echo "tag=${PREVIOUS_TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -57,6 +63,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.previous_tag.outputs.tag }}
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           SCOOP_TAP_TOKEN: ${{ secrets.GH_PAT }}  # Used by both Scoop and Homebrew taps in goreleaser

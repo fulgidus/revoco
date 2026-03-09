@@ -32,14 +32,18 @@ jobs:
       - name: Generate dev tag
         id: tag
         run: |
-          LATEST_TAG=$(git describe --tags --match 'v[0-9]*' --exclude '*-dev-*' --abbrev=0 2>/dev/null || echo "v0.0.0")
-          DEV_TAG="${LATEST_TAG}-dev-$(date -u +%Y%m%dT%H%M%S)"
+          LATEST_STABLE_TAG=$(git tag --sort=-version:refname --list 'v*' | grep -Ev -- '-dev-' | head -n 1 || true)
+          if [ -z "${LATEST_STABLE_TAG}" ]; then
+            LATEST_STABLE_TAG="v0.0.0"
+          fi
+          DEV_TAG="${LATEST_STABLE_TAG}-dev-$(date -u +%Y%m%dT%H%M%S)"
           echo "tag=${DEV_TAG}" >> $GITHUB_OUTPUT
+          echo "base_tag=${LATEST_STABLE_TAG}" >> $GITHUB_OUTPUT
 
       - name: Create and push tag
         run: |
-          git tag ${{ steps.tag.outputs.tag }}
-          git push origin ${{ steps.tag.outputs.tag }}
+          git tag "${{ steps.tag.outputs.tag }}"
+          git push origin "refs/tags/${{ steps.tag.outputs.tag }}"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -57,3 +61,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.tag.outputs.base_tag }}

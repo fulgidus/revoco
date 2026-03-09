@@ -62,7 +62,7 @@ checksum:
 
 changelog:
   sort: asc
-  use: github
+  use: git
   # Only include commits since the previous tag
   filters:
     exclude:
